@@ -1,0 +1,18 @@
+rank,city,wd_score,pub_beds_1000,nearest_km,poverty_pct,private_pct,paradox_zone
+1,NAVOTAS,0.0,0.176,5.659,2.5,37.1,High Paradox
+2,PATEROS,0.062,0.361,2.727,0.8,64.3,Medium Paradox
+3,SAN JUAN,0.11,1.616,3.932,0.3,54.0,Medium Paradox
+4,MALABON,0.1137,0.111,4.796,1.5,63.9,High Paradox
+5,CALOOCAN,0.1147,0.216,8.773,1.9,67.2,High Paradox
+6,PARANAQUE,0.2186,0.199,4.117,0.6,81.0,Medium Paradox
+7,MANDALUYONG,0.3071,3.423,3.355,0.3,68.1,Medium Paradox
+8,MAKATI,0.3233,0.404,3.159,0.6,82.5,Medium Paradox
+9,LAS PINAS,0.4578,0.695,1.972,0.7,64.1,Medium Paradox
+10,PASIG,0.597,0.587,1.739,2.1,70.6,High Paradox
+11,VALENZUELA,0.686,0.383,1.126,0.7,47.4,Medium Paradox
+12,MARIKINA,0.8109,0.467,0.218,0.7,72.2,Medium Paradox
+13,PASAY,0.8115,0.278,0.377,0.5,82.4,Medium Paradox
+14,MUNTINLUPA,0.8278,0.334,0.666,0.1,75.2,Medium Paradox
+15,QUEZON CITY,0.8723,0.696,1.571,0.7,79.0,Low Paradox
+16,TAGUIG,0.8741,0.607,0.809,2.0,64.9,High Paradox
+17,MANILA,1.0,0.771,0.891,1.6,79.5,Low Paradox

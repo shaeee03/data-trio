@@ -1,6 +1,6 @@
 ====================================================================
 DB VALIDATION REPORT
-Generated: 2026-05-04 19:51:33
+Generated: 2026-05-05 00:40:51
 Database:  ../data/database_output/healthcare_vulnerability.db
 ====================================================================
 
@@ -26,7 +26,7 @@ Database:  ../data/database_output/healthcare_vulnerability.db
   ✓ PASS  vulnerability_label only Low/Medium/High
 
 ── PCA VALIDATION ───────────────────────────────────────────────
-  ✓ PASS  PCA total explained variance ≥ 60%  (actual: 95.4%)
+  ✓ PASS  PCA total explained variance ≥ 60%  (actual: 91.3%)
   ✓ PASS  PCA columns non-NULL in fact_vulnerability
 
 ── SCHEMA ───────────────────────────────────────────────────────
@@ -34,36 +34,35 @@ Database:  ../data/database_output/healthcare_vulnerability.db
     facility_code, facility_name, facility_type, facility_category, ownership_major, is_private, is_licensed, city_norm, barangay, service_capability, doh_level, service_level_weight, bed_capacity
   dim_cities: 19 columns
     city_norm, population_2020, population_2024, pop_growth_rate_pct, total_facilities, hospitals, level3_hospitals, level2_hospitals, level1_hospitals, total_bed_capacity, weighted_facility_score, private_facility_count, gov_facility_count, private_ownership_pct, private_to_public_ratio, poverty_threshold_2023_php, poverty_incidence_2021_pct, poverty_incidence_2023_pct, nearest_public_tertiary_km
-  fact_vulnerability: 22 columns
-    city_norm, facility_density_per10k, hospital_density_per10k, beds_per_1000, weighted_score_per10k, level3_per100k, public_primary_per10k, private_ownership_pct, private_to_public_ratio, poverty_incidence_2023_pct, poverty_threshold_2023_php, econ_friction_ratio, population_2020, pop_growth_rate_pct, pca_emergency, pca_diagnostic, pca_primary, nearest_public_tertiary_km, paradox_cluster_id, paradox_cluster_label, vulnerability_label, vulnerability_score
-  pca_components: 4 columns
-    city_norm, pca_emergency, pca_diagnostic, pca_primary
+  fact_vulnerability: 21 columns
+    city_norm, facility_density_per10k, hospital_density_per10k, beds_per_1000, weighted_score_per10k, level3_per100k, public_primary_per10k, private_ownership_pct, private_to_public_ratio, poverty_incidence_2023_pct, poverty_threshold_2023_php, econ_friction_ratio, population_2020, pop_growth_rate_pct, pca_volume_index, pca_primary_care_index, nearest_public_tertiary_km, paradox_cluster_id, paradox_cluster_label, vulnerability_label, vulnerability_score
+  pca_components: 3 columns
+    city_norm, pca_volume_index, pca_primary_care_index
 
 ── SAMPLE QUERY: v_health_desert_summary (top 5 underserved) ───
   City                km  Label     Poverty%   Private%
   --------------- ------  --------  --------  ---------
-  PARANAQUE        6.292  High           0.6       81.0
-  NAVOTAS          6.056  High           2.5       37.1
-  MALABON          4.806  Medium         1.5       63.9
-  MANDALUYONG      3.827  Low            0.3       68.1
-  SAN JUAN         3.806  Low            N/A       54.0
+  CALOOCAN         8.773  High           1.9       67.2
+  NAVOTAS          5.659  High           2.5       37.1
+  MALABON          4.796  Medium         1.5       63.9
+  PARANAQUE        4.117  High           0.6       81.0
+  SAN JUAN         3.932  Low            N/A       54.0
 
 ── PCA LOADINGS ─────────────────────────────────────────────────
   (Rows = original features, Cols = principal components)
   Feature                  PC1 Emerg   PC2 Diagn    PC3 Prim
   ----------------------  ----------  ----------  ----------
-  hospitals                   +0.429      -0.105      +0.004
-  clinics                     +0.432      -0.111      -0.283
-  rhu_count                   +0.378      +0.268      +0.613
-  bhs_count                   -0.009      +0.831      -0.514
-  birthing_homes              +0.360      +0.385      +0.339
-  dialysis_centers            +0.429      -0.091      -0.227
-  laboratories                +0.416      -0.241      -0.337
+  hospitals                   +0.429      -0.105
+  clinics                     +0.432      -0.111
+  rhu_count                   +0.378      +0.268
+  bhs_count                   -0.009      +0.831
+  birthing_homes              +0.360      +0.385
+  dialysis_centers            +0.429      -0.091
+  laboratories                +0.416      -0.241
 
   Explained variance:
-    pca_emergency           72.38%
-    pca_diagnostic          18.95%
-    pca_primary             4.06%
+    pca_volume_index        72.38%
+    pca_primary_care_index  18.95%
 
 ── SUMMARY ──────────────────────────────────────────────────────
   17/17 checks passed ✓ ALL CLEAR

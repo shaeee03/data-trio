@@ -50,11 +50,12 @@ Three normalised tables, one view, and one PCA results table:
   │ NOTE: 'pharmacies' excluded — zero variance across all 17 cities        │
   │ (NHFR does not register standalone pharmacies; FDA/BHFS does).          │
   │ Components are labelled by their dominant loadings:                     │
-  │   PC1 → Emergency Readiness  (hospitals, dialysis, birthing)            │
-  │   PC2 → Diagnostic Access    (laboratories, pharmacies)                 │
-  │   PC3 → Primary Coverage     (rhu_count, bhs_count, clinics)            │
-  │ These 3 components are appended to fact_vulnerability as                │
-  │ pca_emergency, pca_diagnostic, pca_primary for use in the RF model.     │
+  │   PC1 → Healthcare Infrastructure Volume Index  (72.4% variance)        │
+  │          All 7 facility types load equally — captures city SIZE.         │
+  │   PC2 → Community Primary Care Network Index  (19.0% variance)          │
+  │          BHS stations dominant (+0.83) — public safety-net breadth.      │
+  │   Total: 91.3% variance (above 80% threshold). Stored in DB for city    │
+  │   profiling. NOT used in regression (03_model.py uses per-capita vars).  │
   └─────────────────────────────────────────────────────────────────────────┘
 
   v_health_desert_summary  (view, 17 rows)
@@ -131,11 +132,32 @@ PCA_INPUT_COLS = [
     "hospitals", "clinics", "rhu_count", "bhs_count",
     "birthing_homes", "dialysis_centers", "laboratories",
 ]
-PCA_N_COMPONENTS = 3
+PCA_N_COMPONENTS = 2  # PC1+PC2 = 91.3% variance — exceeds 80% threshold
+
+# ── PCA component names (derived from actual factor loadings) ──────────────
+# After fitting PCA on the 7 facility-type columns and inspecting loadings:
+#
+#   PC1 (72.4% variance) — Healthcare Infrastructure Volume Index
+#       All 7 facility types load positively (+0.36 to +0.43).
+#       Captures city SIZE: Manila and QC score highest because they have
+#       more of every facility type — not because care is better per capita.
+#       ⚠ LIMITATION: a city with 100 birthing homes scores similarly to
+#       one with 100 ICU beds. PC1 does not distinguish clinical quality.
+#
+#   PC2 (18.95% variance) — Community Primary Care Network Index
+#       Dominant loader: bhs_count (+0.83).
+#       Secondary: birthing_homes (+0.39), rhu_count (+0.27).
+#       Captures the breadth of government community-level health infrastructure.
+#       High PC2 = strong public primary-care safety net (Valenzuela, Caloocan).
+#
+#   PC3–PC7 add only 8.7% combined — not retained.
+#
+#   PURPOSE: stored for city profiling/clustering/visualisation only.
+#   NOT used as regression features in 03_model.py (which uses per-capita
+#   features beds_per_1000, level3_per100k to avoid the size bias in PC1).
 PCA_COMPONENT_LABELS = [
-    "pca_emergency",   # PC1: hospitals + dialysis + clinics (acute supply)
-    "pca_diagnostic",  # PC2: bhs_count + rhu_count (primary net) vs labs
-    "pca_primary",     # PC3: birthing_homes residual
+    "pca_volume_index",       # PC1 (72.4% var): Infrastructure Volume Index
+    "pca_primary_care_index", # PC2 (19.0% var): Community Primary Care Index
 ]
 
 # ── K-Means clustering configuration ──────────────────────────────────────
@@ -231,9 +253,8 @@ if SQLALCHEMY_AVAILABLE:
         population_2020            = Column(Integer)
         pop_growth_rate_pct        = Column(Float)
         # ── PCA components (appended after PCA step) ───────────────────
-        pca_emergency              = Column(Float)  # PC1
-        pca_diagnostic             = Column(Float)  # PC2
-        pca_primary                = Column(Float)  # PC3
+        pca_volume_index           = Column(Float)  # PC1: Infrastructure Volume Index
+        pca_primary_care_index     = Column(Float)  # PC2: Community Primary Care Index
         # ── Target + label ─────────────────────────────────────────────
         nearest_public_tertiary_km = Column(Float)  # regression target
         paradox_cluster_id         = Column(Integer) # K-Means cluster (0/1/2)
@@ -249,9 +270,8 @@ if SQLALCHEMY_AVAILABLE:
         """
         __tablename__ = "pca_components"
         city_norm      = Column(String, primary_key=True)
-        pca_emergency  = Column(Float)
-        pca_diagnostic = Column(Float)
-        pca_primary    = Column(Float)
+        pca_volume_index       = Column(Float)  # PC1
+        pca_primary_care_index = Column(Float)  # PC2
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -270,7 +290,7 @@ def run_pca(merged_df: pd.DataFrame) -> tuple[pd.DataFrame, PCA, np.ndarray]:
 
     Returns
     -------
-    pca_df  : DataFrame with city_norm + 3 component columns
+    pca_df  : DataFrame with city_norm + 2 component columns (city_norm, pca_volume_index, pca_primary_care_index)
     pca_obj : fitted sklearn PCA object (for loadings + variance)
     X_scaled: the scaled input matrix (for the validation report)
 
@@ -287,15 +307,12 @@ def run_pca(merged_df: pd.DataFrame) -> tuple[pd.DataFrame, PCA, np.ndarray]:
         does).  A zero-variance column contributes nothing to PCA and would
         waste a component dimension on noise.
 
-    Why 3 components?
-        Three components explain the dominant axes of variation:
-        - Cities cluster by acute-care supply (PC1), diagnostic chain (PC2),
-          and primary care network (PC3).
-        - Reducing 8 → 3 gives a ~62.5% dimensionality reduction while
-          retaining the interpretable structure of the supply mix.
-        - The specific number is validated by the explained variance ratio
-          printed in the report; if 3 components explain < 70%, the script
-          warns.
+    Why 2 components?
+        PC1+PC2 explain 91.3% of variance — the 80% threshold is met with
+        only 2 components. PC3 adds only 4.1% and is not retained.
+        Running PCA(n_components=7) and inspecting cumvar confirms:
+          PC1: 72.4%, PC1+PC2: 91.3%, PC1+PC2+PC3: 95.4%.
+        Reducing 7 → 2 gives a 71.4% dimensionality reduction.
     """
     X = merged_df[PCA_INPUT_COLS].fillna(0).values
     scaler = StandardScaler()
@@ -529,10 +546,9 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, cluster_df, db_path
     cur.execute("DROP TABLE IF EXISTS pca_components")
     cur.execute("""
         CREATE TABLE pca_components (
-            city_norm      TEXT PRIMARY KEY,
-            pca_emergency  REAL,
-            pca_diagnostic REAL,
-            pca_primary    REAL
+            city_norm              TEXT PRIMARY KEY,
+            pca_volume_index       REAL,
+            pca_primary_care_index REAL
         )
     """)
     pca_df.to_sql("pca_components", conn, if_exists="append", index=False)
@@ -555,9 +571,8 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, cluster_df, db_path
             econ_friction_ratio        REAL,
             population_2020            INTEGER,
             pop_growth_rate_pct        REAL,
-            pca_emergency              REAL,
-            pca_diagnostic             REAL,
-            pca_primary                REAL,
+            pca_volume_index           REAL,
+            pca_primary_care_index     REAL,
             nearest_public_tertiary_km REAL,
             paradox_cluster_id         INTEGER,
             paradox_cluster_label      TEXT,
@@ -641,9 +656,8 @@ def _create_view(conn, sqlalchemy_mode: bool):
             f.level3_per100k,
             f.econ_friction_ratio,
             f.pop_growth_rate_pct,
-            f.pca_emergency,
-            f.pca_diagnostic,
-            f.pca_primary,
+            f.pca_volume_index,
+            f.pca_primary_care_index,
             c.population_2020,
             c.population_2024,
             c.total_facilities,
@@ -680,7 +694,7 @@ def run_validation(db_path: str, pca_obj: PCA, pca_df: pd.DataFrame) -> str:
       9.  private_ownership_pct range [0, 1]
       10. vulnerability_label only contains Low / Medium / High
       11. PCA total explained variance ≥ 60%
-      12. fact_vulnerability has all 3 PCA columns populated (no NULLs)
+      12. fact_vulnerability has all 2 PCA columns populated (no NULLs)
     """
     conn   = sqlite3.connect(db_path)
     cur    = conn.cursor()
@@ -758,7 +772,7 @@ def run_validation(db_path: str, pca_obj: PCA, pca_df: pd.DataFrame) -> str:
           total_var >= 60.0)
     check("PCA columns non-NULL in fact_vulnerability",
           "SELECT COUNT(*) FROM fact_vulnerability "
-          "WHERE pca_emergency IS NULL OR pca_diagnostic IS NULL OR pca_primary IS NULL",
+          "WHERE pca_volume_index IS NULL OR pca_primary_care_index IS NULL",
           0)
 
     lines.append("\n── SCHEMA ───────────────────────────────────────────────────────")
@@ -839,8 +853,9 @@ if __name__ == "__main__":
     cluster_df = run_kmeans(merged_df)
 
     # Sanity check: PCA output shape
-    assert pca_df.shape == (17, 4), f"PCA output shape wrong: {pca_df.shape}"
-    assert not pca_df[PCA_COMPONENT_LABELS].isnull().any().any(), "PCA output contains NaN"
+    assert pca_df.shape == (17, 3), f"PCA output shape wrong: expected (17,3) [city_norm + 2 components], got {pca_df.shape}"
+    assert not pca_df[PCA_COMPONENT_LABELS].isnull().any().any(), (
+        f"PCA output contains NaN in columns {PCA_COMPONENT_LABELS}")
     print(f"  PCA output: {pca_df.shape[0]} rows × {len(PCA_COMPONENT_LABELS)} components ✓")
 
     # ── 3. Build database ─────────────────────────────────────────────

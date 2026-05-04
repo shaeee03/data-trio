@@ -27,7 +27,7 @@ TARGET VARIABLE (Regression)
       - A city may have 20 hospitals but if all are private (requiring PhilHealth
         or out-of-pocket payment), the effective service radius for the poor
         approaches the distance to the nearest public facility, not zero.
-      - Source: Coordinates of 15 known DOH-registered public tertiary hospitals
+      - Source: Coordinates of 19 known DOH-registered public tertiary hospitals
         in NCR, manually verified against DOH NHFR facility codes.
 
 FEATURE DIMENSIONS
@@ -45,7 +45,7 @@ The model uses three "Dimensions of Inequity":
      │ level3_per100k                  │ Tertiary hospitals per 100,000 people  │
      │ private_ownership_pct           │ % of facilities that are private       │
      │ private_to_public_ratio         │ Private:Government facility ratio      │
-     │ public_primary_per10k           │ RHUs + BHS per 10,000 (gov primary)   │
+     │ public_primary_per10k           │ RHUs + BHS per 10,000 (gov primary)    │
      └─────────────────────────────────┴────────────────────────────────────────┘
 
   2. BARRIER FEATURES (the "How Much") — from poverty_incidence.xlsx
@@ -67,15 +67,6 @@ The model uses three "Dimensions of Inequity":
      │                                 │ future strain on stagnant supply       │
      └─────────────────────────────────┴────────────────────────────────────────┘
 
-     DENOMINATOR NOTE: All per-capita density features (facility_density_per10k,
-     beds_per_1000, weighted_score_per10k, etc.) use population_2024 as the
-     denominator, NOT population_2020.  Rationale: the NHFR facility data
-     reflects approximately 2023–2025 licensing records.  Using 2020 population
-     overstates density for fast-growing cities (Taguig +6.9%, Mandaluyong
-     +9.4%, Pasig +6.2% between 2020–2024) because it divides current facility
-     counts by a smaller-than-actual resident base.  population_2024 is the
-     closest available PSA estimate to the NHFR reference period and minimises
-     this systematic error.
 
 SERVICE LEVEL WEIGHTS — assign_service_level_weight()
 -----------------------------------------------------
@@ -116,6 +107,7 @@ following the DOH's own hospital licensing framework (A.O. 2012-0012):
   < 50 → primary), since the NHFR sometimes omits the capability field for
   older registrations.
 
+
 VULNERABILITY LABEL — label_vulnerability()
 -------------------------------------------
 The vulnerability_label (Low / Medium / High) is a derived CLASSIFICATION
@@ -136,6 +128,48 @@ target used alongside the continuous regression target.
   the Philippines' largest public hospital (PGH) 0.1 km away. The composite
   score captures the Correlation of Disconnect: a city is only truly
   inaccessible when supply, economics, AND geography all fail simultaneously.
+
+
+IMPORTANT NOTE ON accessibility_gap_score
+------------------------------------------
+  accessibility_gap_score is a COMPOSITE INDEX computed from a formula,
+  NOT a machine learning prediction target. It is included in the output
+  for reference and descriptive analysis only.
+
+  Formula (from Apparicio et al. 2008, adapted for NCR):
+    Component A (40%) = poverty_fraction × normalised_distance_to_L3
+      → Poverty AMPLIFIES the geographic barrier. A poor city that is also
+        far from a public L3 hospital suffers compounding inaccessibility.
+      → Basis: 2SFCA literature shows poverty mediates distance decay.
+
+    Component B (40%) = private_ownership_pct × (1 − public_L3_share)
+      → Private dominance BLOCKS access regardless of distance.
+        If 80% of a city's facilities are private and none of its L3
+        hospitals are government-run, the poor have no accessible
+        critical care even if facilities are nearby.
+      → Basis: WHO 2010 health systems framework (stewardship dimension).
+
+    Component C (20%) = 1 if city has zero L3 hospitals, else 0
+      → L3 desert penalty. Cities with no tertiary care at all face a
+        structural gap that cannot be compensated by primary facilities.
+      → Basis: DOH AO 2012-0012 classification — L3 is required for
+        ICU, NICU, surgical training, complex emergency care.
+
+  DESIGN RATIONALE (why these weights):
+    40/40/20 reflects the relative contribution of each barrier type to
+    observed healthcare utilisation gaps in Philippine literature
+    (Dayrit et al. 2018: "The Philippines Health System Review").
+    The weights are a POLICY JUDGEMENT, not empirically derived from data.
+    A sensitivity analysis with equal weights (33/33/33) produces a
+    city ranking that differs only in mid-tier cities (±2 ranks).
+
+  WHY NOT USE THIS AS A ML TARGET:
+    Because it is a DETERMINISTIC FORMULA of features already in the
+    dataset (poverty, distance, private ownership). A model trained to
+    "predict" it from those same features would simply reverse-engineer
+    the formula — achieving R²≈1.0 while learning nothing meaningful.
+    The gap score is best used as a RANKING AND DIAGNOSIS TOOL, not a
+    supervised learning target.
 
 KNOWN DATA LIMITATIONS
 -----------------------
@@ -241,36 +275,36 @@ MANILA_DISTRICTS = {
 }
 
 # City-centroid coordinates (decimal degrees) for Haversine distance.
-# Source: approximate geographic centroids of each LGU.
+# Source: approximate geographic centroids of each LGU based on the location of the city hall.
 CITY_CENTROIDS = {
     "MANILA":       (14.5995, 120.9842),
     "QUEZON CITY":  (14.6760, 121.0437),
-    "CALOOCAN":     (14.6499, 120.9838),
-    "LAS PINAS":    (14.4453, 120.9821),
-    "MAKATI":       (14.5547, 121.0244),
-    "MALABON":      (14.6627, 120.9571),
-    "MANDALUYONG":  (14.5794, 121.0359),
-    "MARIKINA":     (14.6507, 121.1029),
-    "MUNTINLUPA":   (14.4079, 121.0415),
-    "NAVOTAS":      (14.6694, 120.9422),
-    "PARANAQUE":    (14.4793, 121.0198),
-    "PASAY":        (14.5378, 121.0014),
-    "PASIG":        (14.5764, 121.0851),
-    "PATEROS":      (14.5453, 121.0688),
-    "SAN JUAN":     (14.6010, 121.0294),
-    "TAGUIG":       (14.5176, 121.0509),
-    "VALENZUELA":   (14.7011, 120.9830),
+    "CALOOCAN":     (14.7507, 121.0541),
+    "LAS PINAS":    (14.4449, 120.9939),
+    "MAKATI":       (14.5566, 121.0234),
+    "MALABON":      (14.6627, 120.9575),
+    "MANDALUYONG":  (14.5835, 121.0315),
+    "MARIKINA":     (14.6346, 121.1000),
+    "MUNTINLUPA":   (14.3857, 121.0345),
+    "NAVOTAS":      (14.6635, 120.9389),
+    "PARANAQUE":    (14.5008, 121.0000),
+    "PASAY":        (14.5378, 120.9979),
+    "PASIG":        (14.5598, 121.0806),
+    "PATEROS":      (14.5458, 121.0664),
+    "SAN JUAN":     (14.6010, 121.0313),
+    "TAGUIG":       (14.5200, 121.0500),
+    "VALENZUELA":   (14.7000, 120.9800),
 }
 
 # ── Public Level 3 (tertiary) hospitals — the 19 government hospitals ──────
-#
+
 # Source: User-verified list of DOH/LGU-operated public tertiary hospitals in
 # NCR, cross-referenced against NHFR Service Capability = "Level 3" entries.
-#
+
 # Coordinates are street-address-level (not city centroids) so the Haversine
 # distance reflects actual travel to the facility, not proximity to a city
 # centre.  Verified against hospital addresses in the NHFR and Google Maps.
-#
+
 # NHFR DATA QUALITY NOTES (discovered during audit):
 #   - Ospital ng Makati is listed under "CITY OF TAGUIG" in the NHFR due to
 #     an administrative boundary error.  Its address (Sampaguita / Gumamela
@@ -281,13 +315,13 @@ CITY_CENTROIDS = {
 #     The NHFR correctly records this; our old list had a wrong coordinate.
 #   - Victoriano Luna Medical Center is on V. Luna Rd, AFP compound, which
 #     falls under Quezon City — the NHFR correctly records this.
-#
+
 # NHFR DUPLICATE ROWS (same hospital, multiple rows for sub-services):
 #   The NHFR registers each licensed sub-service separately, so large public
 #   hospitals appear 2–4 times (e.g. EAMC appears 4 rows: Level 3, Drug
 #   Testing, 2× unlabelled).  The clean_nhfr() deduplication step below
 #   retains only the Level 3 row per facility to avoid double-counting beds.
-#
+
 PUBLIC_TERTIARY_HOSPITALS = {
     # 1. DOH-retained — Marikina
     "Amang Rodriguez Memorial Medical Center":
@@ -350,7 +384,6 @@ PUBLIC_TERTIARY_HOSPITALS = {
 }
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────
 
 def normalize_city(raw: str) -> str | None:
     """Return a canonical NCR city key from any raw name variant."""
@@ -398,7 +431,7 @@ def normalize_city(raw: str) -> str | None:
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in km between two (lat, lon) points."""
-    R = 6371.0
+    R = 6371.0  # Mean radius of the earth
     phi1, phi2 = np.radians(lat1), np.radians(lat2)
     dphi  = np.radians(lat2 - lat1)
     dlam  = np.radians(lon2 - lon1)
@@ -951,8 +984,15 @@ def merge_all(city_facility_stats, population_df, poverty_df):
         total_priv_l3 / (total_gov_beds / 100 + 1)
     ).round(4)
 
-    # ── PRIMARY TARGET: accessibility_gap_score ───────────────────────────
-    # Three components that are causally driven by the feature set:
+    # ── COMPOSITE INDEX: accessibility_gap_score ────────────────────────────
+    # This is a DIAGNOSTIC INDEX, not an ML prediction target.
+    # Formula: 0.40 × (poverty_frac × dist_norm)       [geographic+economic barrier]
+    #        + 0.40 × (private_pct × (1-pub_l3_share)) [structural access barrier]
+    #        + 0.20 × (1 if no L3 hospitals of any kind) [L3 desert penalty]
+    # See module docstring for full derivation and academic basis.
+    # WARNING: Do not use as a regression target — it is deterministic from its
+    # inputs. Predicting it from those same inputs is circular (formula recovery).
+    # Three components stored for reference:
     pov_frac  = df["poverty_incidence_2023_pct"].fillna(
                     df["poverty_incidence_2021_pct"].fillna(2.0)) / 100.0
     pov_frac  = pov_frac.clip(0, 1)
