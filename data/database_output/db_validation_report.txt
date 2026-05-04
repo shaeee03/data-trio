@@ -1,0 +1,70 @@
+====================================================================
+DB VALIDATION REPORT
+Generated: 2026-05-04 17:22:49
+Database:  ../data/database_output/healthcare_vulnerability.db
+====================================================================
+
+── TABLE EXISTENCE ──────────────────────────────────────────────
+  ✓ PASS    dim_cities exists
+  ✓ PASS    dim_facilities exists
+  ✓ PASS    fact_vulnerability exists
+  ✓ PASS    pca_components exists
+  ✓ PASS    v_health_desert_summary exists
+
+── ROW COUNTS ───────────────────────────────────────────────────
+  ✓ PASS  dim_facilities: 2,810 rows
+  ✓ PASS  dim_cities: 17 rows
+  ✓ PASS  fact_vulnerability: 17 rows
+  ✓ PASS  pca_components: 17 rows
+
+── DATA INTEGRITY ───────────────────────────────────────────────
+  ✓ PASS  No duplicate city_norm in dim_cities
+  ✓ PASS  No NULL city_norm in dim_facilities
+  ✓ PASS  nearest_public_tertiary_km all >= 0
+  ✓ PASS  nearest_public_tertiary_km all <= 50
+  ✓ PASS  private_ownership_pct all in [0,1]
+  ✓ PASS  vulnerability_label only Low/Medium/High
+
+── PCA VALIDATION ───────────────────────────────────────────────
+  ✓ PASS  PCA total explained variance ≥ 60%  (actual: 95.4%)
+  ✓ PASS  PCA columns non-NULL in fact_vulnerability
+
+── SCHEMA ───────────────────────────────────────────────────────
+  dim_facilities: 13 columns
+    facility_code, facility_name, facility_type, facility_category, ownership_major, is_private, is_licensed, city_norm, barangay, service_capability, doh_level, service_level_weight, bed_capacity
+  dim_cities: 19 columns
+    city_norm, population_2020, population_2024, pop_growth_rate_pct, total_facilities, hospitals, level3_hospitals, level2_hospitals, level1_hospitals, total_bed_capacity, weighted_facility_score, private_facility_count, gov_facility_count, private_ownership_pct, private_to_public_ratio, poverty_threshold_2023_php, poverty_incidence_2021_pct, poverty_incidence_2023_pct, nearest_public_tertiary_km
+  fact_vulnerability: 20 columns
+    city_norm, facility_density_per10k, hospital_density_per10k, beds_per_1000, weighted_score_per10k, level3_per100k, public_primary_per10k, private_ownership_pct, private_to_public_ratio, poverty_incidence_2023_pct, poverty_threshold_2023_php, econ_friction_ratio, population_2020, pop_growth_rate_pct, pca_emergency, pca_diagnostic, pca_primary, nearest_public_tertiary_km, vulnerability_label, vulnerability_score
+  pca_components: 4 columns
+    city_norm, pca_emergency, pca_diagnostic, pca_primary
+
+── SAMPLE QUERY: v_health_desert_summary (top 5 underserved) ───
+  City                km  Label     Poverty%   Private%
+  --------------- ------  --------  --------  ---------
+  PARANAQUE        6.292  High           0.6       81.0
+  NAVOTAS          6.056  High           2.5       37.1
+  MALABON          4.806  Medium         1.5       63.9
+  MANDALUYONG      3.827  Low            0.3       68.1
+  SAN JUAN         3.806  Low            N/A       54.0
+
+── PCA LOADINGS ─────────────────────────────────────────────────
+  (Rows = original features, Cols = principal components)
+  Feature                  PC1 Emerg   PC2 Diagn    PC3 Prim
+  ----------------------  ----------  ----------  ----------
+  hospitals                   +0.429      -0.105      +0.004
+  clinics                     +0.432      -0.111      -0.283
+  rhu_count                   +0.378      +0.268      +0.613
+  bhs_count                   -0.009      +0.831      -0.514
+  birthing_homes              +0.360      +0.385      +0.339
+  dialysis_centers            +0.429      -0.091      -0.227
+  laboratories                +0.416      -0.241      -0.337
+
+  Explained variance:
+    pca_emergency           72.38%
+    pca_diagnostic          18.95%
+    pca_primary             4.06%
+
+── SUMMARY ──────────────────────────────────────────────────────
+  17/17 checks passed ✓ ALL CLEAR
+====================================================================
