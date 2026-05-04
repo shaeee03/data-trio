@@ -88,6 +88,8 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 
 # Fix Windows charmap UnicodeEncodeError for terminals that default to cp1252
 import sys
@@ -135,6 +137,21 @@ PCA_COMPONENT_LABELS = [
     "pca_diagnostic",  # PC2: bhs_count + rhu_count (primary net) vs labs
     "pca_primary",     # PC3: birthing_homes residual
 ]
+
+# ── K-Means clustering configuration ──────────────────────────────────────
+# Clusters cities into Healthcare Paradox Zones for the vulnerability heatmap.
+# Input: the same 7 facility-type columns used for PCA (supply-side profile)
+#        + poverty_incidence_2023_pct (barrier dimension)
+# k=3: Low / Medium / High paradox zones — matches the vulnerability label
+#      scheme and is interpretable for LGU policy communication.
+# Silhouette score is logged to validate cluster quality.
+KMEANS_K = 3
+KMEANS_CLUSTER_COLS = [
+    "hospitals", "level3_hospitals", "beds_per_1000",
+    "private_ownership_pct", "poverty_incidence_2023_pct",
+    "nearest_public_tertiary_km", "weighted_score_per10k",
+]
+KMEANS_CLUSTER_LABELS = {0: "Low Paradox", 1: "Medium Paradox", 2: "High Paradox"}
 
 # ── SQLAlchemy ORM schema (used when SQLAlchemy is available) ──────────────
 if SQLALCHEMY_AVAILABLE:
@@ -187,10 +204,7 @@ if SQLALCHEMY_AVAILABLE:
         poverty_threshold_2023_php = Column(Float)
         poverty_incidence_2021_pct = Column(Float)
         poverty_incidence_2023_pct = Column(Float)
-        nearest_public_tertiary_km     = Column(Float)   # geometric reference
-        accessibility_gap_score        = Column(Float)   # composite target
-        effective_public_beds_per1000  = Column(Float)   # public bed depth
-        market_exclusion_index         = Column(Float)   # private-gating ratio
+        nearest_public_tertiary_km = Column(Float)   # TARGET VARIABLE
 
     class FactVulnerability(Base):
         """
@@ -221,12 +235,11 @@ if SQLALCHEMY_AVAILABLE:
         pca_diagnostic             = Column(Float)  # PC2
         pca_primary                = Column(Float)  # PC3
         # ── Target + label ─────────────────────────────────────────────
-        nearest_public_tertiary_km     = Column(Float)   # geometric reference
-        accessibility_gap_score        = Column(Float)   # PRIMARY regression target
-        effective_public_beds_per1000  = Column(Float)   # SECONDARY regression target
-        market_exclusion_index         = Column(Float)   # private-gating index
-        vulnerability_label            = Column(String)  # classification target
-        vulnerability_score            = Column(Integer) # 0=Low,1=Med,2=High
+        nearest_public_tertiary_km = Column(Float)  # regression target
+        paradox_cluster_id         = Column(Integer) # K-Means cluster (0/1/2)
+        paradox_cluster_label      = Column(String)  # Low/Medium/High Paradox
+        vulnerability_label        = Column(String)  # classification target
+        vulnerability_score        = Column(Integer) # 0=Low,1=Med,2=High
 
     class PcaComponents(Base):
         """
@@ -310,11 +323,86 @@ def run_pca(merged_df: pd.DataFrame) -> tuple[pd.DataFrame, PCA, np.ndarray]:
     return pca_df, pca, X_scaled
 
 
+
+
+def run_kmeans(merged_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    K-Means clustering on supply-barrier features.
+
+    Groups the 17 NCR cities into 3 Healthcare Paradox Zones:
+      Cluster 0 → Low Paradox    (good supply, low poverty, near public L3)
+      Cluster 1 → Medium Paradox (mixed access)
+      Cluster 2 → High Paradox   (poor supply OR far from public L3 OR high poverty)
+
+    Why K-Means here (not in 03_model.py)?
+      Clustering is an UNSUPERVISED step that characterises the supply
+      landscape. It belongs in the database layer so the cluster label is
+      stored alongside raw features and available to both the ML model and
+      the visualisation layer without re-computing.
+
+    Why k=3?
+      Three clusters align with the Low/Medium/High vulnerability label
+      from 01_data_cleaning.py, enabling direct comparison between
+      the rule-based label (composite criteria) and the data-driven
+      cluster assignment. Silhouette score is printed for validation.
+
+    Why these input columns?
+      They represent the three "Dimensions of Inequity" from the proposal:
+      supply depth (hospitals, L3 count, beds), economic barrier (poverty,
+      private ownership), and spatial barrier (distance to public L3).
+      Weighting all equally after StandardScaling ensures no single
+      dimension dominates.
+
+    Returns
+    -------
+    DataFrame with city_norm and three columns:
+      paradox_cluster_id    (int 0/1/2)
+      paradox_cluster_label (str "Low/Medium/High Paradox")
+      silhouette_score      (float, same value for all rows — for logging)
+    """
+    available = [c for c in KMEANS_CLUSTER_COLS if c in merged_df.columns]
+    X = merged_df[available].fillna(merged_df[available].median()).values
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    km = KMeans(n_clusters=KMEANS_K, n_init=50, random_state=42)
+    labels = km.fit_predict(X_scaled)
+
+    sil = silhouette_score(X_scaled, labels)
+    print(f"\n  K-Means clustering (k={KMEANS_K}) on {len(available)} features:")
+    print(f"    Silhouette score: {sil:.4f}  (>0.5 = good cluster separation)")
+
+    # Reorder clusters so label 0=lowest, 2=highest paradox
+    # Sort by mean nearest_public_tertiary_km per cluster (proxy for inaccessibility)
+    if "nearest_public_tertiary_km" in merged_df.columns:
+        km_dist = {}
+        for c in range(KMEANS_K):
+            mask = labels == c
+            km_dist[c] = merged_df["nearest_public_tertiary_km"].values[mask].mean()
+        # Map: lowest mean distance → cluster 0, highest → cluster 2
+        order = sorted(km_dist, key=km_dist.get)
+        remap = {old: new for new, old in enumerate(order)}
+        labels = np.array([remap[l] for l in labels])
+
+    print(f"    Cluster distribution:")
+    for c in range(KMEANS_K):
+        cname = KMEANS_CLUSTER_LABELS[c]
+        cities_in = merged_df["city_norm"].values[labels == c].tolist()
+        print(f"      {c} ({cname}): {cities_in}")
+
+    cluster_df = pd.DataFrame({
+        "city_norm":            merged_df["city_norm"].values,
+        "paradox_cluster_id":   labels,
+        "paradox_cluster_label":np.array([KMEANS_CLUSTER_LABELS[l] for l in labels]),
+        "silhouette_score":     sil,
+    })
+    return cluster_df
+
 # ═══════════════════════════════════════════════════════════════════════════
 # DATABASE BUILD FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════
 
-def build_database_sqlalchemy(merged_df, facilities_df, pca_df, engine):
+def build_database_sqlalchemy(merged_df, facilities_df, pca_df, cluster_df, engine):
     """Full ORM-based build when SQLAlchemy is available."""
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
@@ -349,6 +437,8 @@ def build_database_sqlalchemy(merged_df, facilities_df, pca_df, engine):
         fact_df = merged_df.copy()
         for col in PCA_COMPONENT_LABELS:
             fact_df[col] = pca_df[col].values
+        fact_df['paradox_cluster_id']    = cluster_df['paradox_cluster_id'].values
+        fact_df['paradox_cluster_label'] = cluster_df['paradox_cluster_label'].values
         fact_records = fact_df.to_dict("records")
         session.bulk_insert_mappings(FactVulnerability, [
             {k: v for k, v in r.items()
@@ -368,7 +458,7 @@ def build_database_sqlalchemy(merged_df, facilities_df, pca_df, engine):
         conn.commit()
 
 
-def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
+def build_database_sqlite3(merged_df, facilities_df, pca_df, cluster_df, db_path):
     """Fallback build using sqlite3 stdlib — identical schema."""
     conn = sqlite3.connect(db_path)
     cur  = conn.cursor()
@@ -421,10 +511,7 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
             poverty_threshold_2023_php REAL,
             poverty_incidence_2021_pct REAL,
             poverty_incidence_2023_pct REAL,
-            nearest_public_tertiary_km    REAL,
-            accessibility_gap_score       REAL,
-            effective_public_beds_per1000 REAL,
-            market_exclusion_index        REAL
+            nearest_public_tertiary_km REAL
         )
     """)
     city_keep = ["city_norm","population_2020","population_2024","pop_growth_rate_pct",
@@ -433,8 +520,7 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
                  "private_facility_count","gov_facility_count","private_ownership_pct",
                  "private_to_public_ratio","poverty_threshold_2023_php",
                  "poverty_incidence_2021_pct","poverty_incidence_2023_pct",
-                 "nearest_public_tertiary_km","accessibility_gap_score",
-                 "effective_public_beds_per1000","market_exclusion_index"]
+                 "nearest_public_tertiary_km"]
     city_df = merged_df[[c for c in city_keep if c in merged_df.columns]].copy()
     city_df = city_df.where(pd.notnull(city_df), None)
     city_df.to_sql("dim_cities", conn, if_exists="append", index=False)
@@ -472,12 +558,11 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
             pca_emergency              REAL,
             pca_diagnostic             REAL,
             pca_primary                REAL,
-            nearest_public_tertiary_km    REAL,
-            accessibility_gap_score       REAL,
-            effective_public_beds_per1000 REAL,
-            market_exclusion_index        REAL,
-            vulnerability_label           TEXT,
-            vulnerability_score           INTEGER
+            nearest_public_tertiary_km REAL,
+            paradox_cluster_id         INTEGER,
+            paradox_cluster_label      TEXT,
+            vulnerability_label        TEXT,
+            vulnerability_score        INTEGER
         )
     """)
     fact_keep = ["city_norm","facility_density_per10k","hospital_density_per10k",
@@ -486,12 +571,12 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
                  "private_to_public_ratio","poverty_incidence_2023_pct",
                  "poverty_threshold_2023_php","econ_friction_ratio",
                  "population_2020","pop_growth_rate_pct",
-                 "nearest_public_tertiary_km","accessibility_gap_score",
-                 "effective_public_beds_per1000","market_exclusion_index",
-                 "vulnerability_label","vulnerability_score"]
+                 "nearest_public_tertiary_km","paradox_cluster_id","paradox_cluster_label","vulnerability_label","vulnerability_score"]
     fact_df = merged_df[[c for c in fact_keep if c in merged_df.columns]].copy()
     for col in PCA_COMPONENT_LABELS:
         fact_df[col] = pca_df[col].values
+    fact_df['paradox_cluster_id']    = cluster_df['paradox_cluster_id'].values
+    fact_df['paradox_cluster_label'] = cluster_df['paradox_cluster_label'].values
     fact_df = fact_df.where(pd.notnull(fact_df), None)
     fact_df.to_sql("fact_vulnerability", conn, if_exists="append", index=False)
 
@@ -545,9 +630,6 @@ def _create_view(conn, sqlalchemy_mode: bool):
         SELECT
             f.city_norm,
             f.nearest_public_tertiary_km,
-            f.accessibility_gap_score,
-            f.effective_public_beds_per1000,
-            f.market_exclusion_index,
             f.vulnerability_label,
             f.vulnerability_score,
             f.poverty_incidence_2023_pct,
@@ -752,13 +834,17 @@ if __name__ == "__main__":
     print("\n[2/5] Running PCA on facility-type supply columns...")
     pca_df, pca_obj, X_scaled = run_pca(merged_df)
 
+    # ── 2b. K-Means clustering ────────────────────────────────────────
+    print("\n[2b] Running K-Means clustering (k=3 Healthcare Paradox Zones)...")
+    cluster_df = run_kmeans(merged_df)
+
     # Sanity check: PCA output shape
     assert pca_df.shape == (17, 4), f"PCA output shape wrong: {pca_df.shape}"
     assert not pca_df[PCA_COMPONENT_LABELS].isnull().any().any(), "PCA output contains NaN"
     print(f"  PCA output: {pca_df.shape[0]} rows × {len(PCA_COMPONENT_LABELS)} components ✓")
 
     # ── 3. Build database ─────────────────────────────────────────────
-    print(f"\n[3/5] Building database: {DB_PATH}")
+    print(f"\n[3/6] Building database: {DB_PATH}")
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
         print(f"  Removed existing database.")
@@ -766,11 +852,11 @@ if __name__ == "__main__":
     if SQLALCHEMY_AVAILABLE:
         db_url = f"sqlite:///{DB_PATH}"
         engine = create_engine(db_url, echo=False)
-        build_database_sqlalchemy(merged_df, facilities_df, pca_df, engine)
+        build_database_sqlalchemy(merged_df, facilities_df, pca_df, cluster_df, engine)
         engine.dispose()
         print(f"  Built via SQLAlchemy ORM ✓")
     else:
-        conn = build_database_sqlite3(merged_df, facilities_df, pca_df, DB_PATH)
+        conn = build_database_sqlite3(merged_df, facilities_df, pca_df, cluster_df, DB_PATH)
         conn.close()
         print(f"  Built via sqlite3 stdlib ✓")
         print(f"  NOTE: Schema is SQLAlchemy-compatible. Install sqlalchemy to use ORM.")
@@ -779,16 +865,16 @@ if __name__ == "__main__":
     print(f"  Database size: {db_size_kb:.1f} KB")
 
     # ── 4. Validate ───────────────────────────────────────────────────
-    print("\n[4/5] Running validation checks...")
+    print("\n[4/6] Running validation checks...")
     report = run_validation(DB_PATH, pca_obj, pca_df)
     print(report)
 
     # ── 5. Save report ────────────────────────────────────────────────
-    print(f"\n[5/5] Saving validation report → {REPORT_PATH}")
+    print(f"\n[5/6] Saving validation report → {REPORT_PATH}")
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(report)
     print("  Saved ✓")
 
     print("\n" + "=" * 68)
-    print("DONE.  Database ready.  Next: run 03_model.py")
+    print("DONE.  Database ready (PCA + K-Means + all targets).  Next: run 03_model.py")
     print("=" * 68)

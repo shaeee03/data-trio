@@ -1,805 +1,891 @@
 {
   "project": "Metro Manila Healthcare Paradox",
+  "version": "v4",
   "n_cities": 17,
-  "n_features": 21,
   "feature_names": [
-    "facility_density_per10k",
-    "hospital_density_per10k",
-    "beds_per_1000",
-    "weighted_score_per10k",
-    "level3_per100k",
-    "public_primary_per10k",
-    "private_ownership_pct",
-    "private_to_public_ratio",
-    "poverty_incidence_2023_pct",
-    "population_2020",
-    "pop_growth_rate_pct",
     "nearest_public_tertiary_km",
-    "acute_care_supply_index",
-    "primary_network_index",
-    "specialist_support_index",
-    "poverty_x_private",
-    "l3_per_poor_resident",
-    "growth_x_private_deficit",
+    "beds_per_1000",
+    "level3_per100k",
+    "poverty_incidence_2023_pct",
+    "private_ownership_pct",
+    "nearest_km_x_poverty",
     "beds_per_poor_1000",
-    "public_l3_density",
-    "nearest_km_x_poverty"
+    "l3_per_poor_resident"
   ],
   "feature_labels": {
-    "facility_density_per10k": "Facility Density (per 10k residents)",
-    "hospital_density_per10k": "Hospital Density (per 10k residents)",
-    "beds_per_1000": "Bed Capacity (per 1,000 residents)",
-    "weighted_score_per10k": "Quality-Weighted Supply Score (per 10k)",
-    "level3_per100k": "Level-3 Hospital Density (per 100k)",
-    "public_primary_per10k": "Public Primary Care Units (per 10k)",
-    "private_ownership_pct": "Private Ownership Share (%)",
-    "private_to_public_ratio": "Private-to-Public Facility Ratio",
-    "poverty_incidence_2023_pct": "Poverty Incidence (%, 2023)",
-    "population_2020": "Total Population (2020 Census)",
-    "pop_growth_rate_pct": "Annual Population Growth Rate (%)",
     "nearest_public_tertiary_km": "Distance to Nearest Public L3 Hospital (km)",
-    "acute_care_supply_index": "Acute Care Supply Index (PCA-1)",
-    "primary_network_index": "Primary Care Network Index (PCA-2)",
-    "specialist_support_index": "Specialist Support Index (PCA-3)",
-    "poverty_x_private": "Poverty \u00d7 Private Ownership (Double Barrier)",
-    "l3_per_poor_resident": "Effective L3 Access (poverty-discounted)",
-    "growth_x_private_deficit": "Growth Pressure on Public Capacity",
+    "beds_per_1000": "Bed Capacity (per 1,000 residents)",
+    "level3_per100k": "Level-3 Hospital Density (per 100k)",
+    "poverty_incidence_2023_pct": "Poverty Incidence (%, 2023)",
+    "private_ownership_pct": "Private Ownership Share (%)",
+    "nearest_km_x_poverty": "Distance \u00d7 Poverty (compound geographic barrier)",
     "beds_per_poor_1000": "Effective Bed Supply (poverty-discounted)",
-    "public_l3_density": "Public L3 Share of Total Supply",
-    "nearest_km_x_poverty": "Distance \u00d7 Poverty (compound geographic barrier)"
+    "l3_per_poor_resident": "Effective L3 Access (poverty-discounted)"
   },
-  "pca_rename_map": {
-    "pca_emergency": "acute_care_supply_index",
-    "pca_diagnostic": "primary_network_index",
-    "pca_primary": "specialist_support_index"
-  },
-  "engineered_features": [
-    "poverty_x_private",
-    "l3_per_poor_resident",
-    "growth_x_private_deficit",
-    "beds_per_poor_1000",
-    "public_l3_density",
-    "nearest_km_x_poverty"
-  ],
-  "model_notes": {
-    "strategy": "Leave-One-Out CV (n=17)",
-    "rf_hyperparams": {
-      "n_estimators": 200,
-      "max_depth": 3,
-      "min_samples_leaf": 3,
-      "max_features": "sqrt"
-    },
-    "why_fixed_not_gridsearch": "GridSearchCV selects overfitting models at n=17; fixed constrained params outperform.",
-    "why_not_distance_target": "nearest_public_tertiary_km is a geometric constant; R\u00b2\u2248-0.07 was correct."
+  "model_architecture": {
+    "primary": "GradientBoostingRegressor(n=50,depth=2,lr=0.1,subsample=0.8)",
+    "secondary": "Ridge(alpha=1.0)",
+    "baseline": "KNeighborsRegressor(k=3,weights=distance)",
+    "validation": "LeaveOneOut CV (n=17)",
+    "why_gbm": "Captures poverty\u00d7distance non-linearity; stochastic regularisation via subsample=0.8",
+    "why_ridge": "pub_beds is nearly linear in beds \u00d7 private_pct; Ridge exploits this perfectly",
+    "why_not_gridsearch": "Inner KFold on n=17 selects overfitting hyperparams \u2192 LOO R\u00b2\u21920",
+    "why_8_features": "p\u2264n/2 guideline; confirmed empirically: R\u00b2 drops when >8 features used"
   },
   "task_A_wd": [
     {
-      "model": "kNN Regressor (Baseline)",
-      "MAE": 0.2365,
-      "RMSE": 0.2603,
-      "R2": 0.384,
+      "model": "kNN (Baseline)",
+      "MAE": 0.2451,
+      "RMSE": 0.2811,
+      "R2": 0.2817,
       "unit": "Wd",
       "city_preds": [
         {
           "city": "CALOOCAN",
           "actual": 0.3778,
-          "pred": 0.5813,
-          "error": 0.2036,
-          "abs_err": 0.2036
+          "pred": 0.2745,
+          "error": -0.1032,
+          "abs_err": 0.1032
         },
         {
           "city": "LAS PINAS",
           "actual": 0.697,
-          "pred": 0.5324,
-          "error": -0.1646,
-          "abs_err": 0.1646
+          "pred": 0.5737,
+          "error": -0.1234,
+          "abs_err": 0.1234
         },
         {
           "city": "MAKATI",
           "actual": 0.3341,
-          "pred": 0.4495,
-          "error": 0.1154,
-          "abs_err": 0.1154
+          "pred": 0.5688,
+          "error": 0.2347,
+          "abs_err": 0.2347
         },
         {
           "city": "MALABON",
           "actual": 0.1203,
-          "pred": 0.3888,
-          "error": 0.2685,
-          "abs_err": 0.2685
+          "pred": 0.2554,
+          "error": 0.1351,
+          "abs_err": 0.1351
         },
         {
           "city": "MANDALUYONG",
           "actual": 0.2705,
-          "pred": 0.6516,
-          "error": 0.3811,
-          "abs_err": 0.3811
+          "pred": 0.663,
+          "error": 0.3925,
+          "abs_err": 0.3925
         },
         {
           "city": "MANILA",
           "actual": 1.0,
-          "pred": 0.7977,
-          "error": -0.2023,
-          "abs_err": 0.2023
+          "pred": 0.6154,
+          "error": -0.3846,
+          "abs_err": 0.3846
         },
         {
           "city": "MARIKINA",
           "actual": 0.4652,
-          "pred": 0.3683,
-          "error": -0.0969,
-          "abs_err": 0.0969
+          "pred": 0.3551,
+          "error": -0.11,
+          "abs_err": 0.11
         },
         {
           "city": "MUNTINLUPA",
           "actual": 0.3914,
-          "pred": 0.67,
-          "error": 0.2786,
-          "abs_err": 0.2786
+          "pred": 0.7931,
+          "error": 0.4017,
+          "abs_err": 0.4017
         },
         {
           "city": "NAVOTAS",
           "actual": 0.0,
-          "pred": 0.1917,
-          "error": 0.1917,
-          "abs_err": 0.1917
+          "pred": 0.2002,
+          "error": 0.2002,
+          "abs_err": 0.2002
         },
         {
           "city": "PARANAQUE",
           "actual": 0.1122,
-          "pred": 0.2217,
-          "error": 0.1096,
-          "abs_err": 0.1096
+          "pred": 0.1729,
+          "error": 0.0608,
+          "abs_err": 0.0608
         },
         {
           "city": "PASAY",
           "actual": 0.813,
-          "pred": 0.4983,
-          "error": -0.3147,
-          "abs_err": 0.3147
+          "pred": 0.6611,
+          "error": -0.1519,
+          "abs_err": 0.1519
         },
         {
           "city": "PASIG",
           "actual": 0.9341,
-          "pred": 0.5472,
-          "error": -0.3869,
-          "abs_err": 0.3869
+          "pred": 0.7361,
+          "error": -0.198,
+          "abs_err": 0.198
         },
         {
           "city": "QUEZON CITY",
           "actual": 0.8733,
-          "pred": 0.7903,
-          "error": -0.0831,
-          "abs_err": 0.0831
+          "pred": 0.6379,
+          "error": -0.2354,
+          "abs_err": 0.2354
         },
         {
           "city": "SAN JUAN",
           "actual": 0.1248,
-          "pred": 0.2782,
-          "error": 0.1534,
-          "abs_err": 0.1534
+          "pred": 0.6605,
+          "error": 0.5357,
+          "abs_err": 0.5357
         },
         {
           "city": "TAGUIG",
           "actual": 0.8431,
-          "pred": 0.5713,
-          "error": -0.2718,
-          "abs_err": 0.2718
+          "pred": 0.7138,
+          "error": -0.1292,
+          "abs_err": 0.1292
         },
         {
           "city": "VALENZUELA",
           "actual": 0.7489,
-          "pred": 0.3059,
-          "error": -0.4431,
-          "abs_err": 0.4431
+          "pred": 0.4243,
+          "error": -0.3247,
+          "abs_err": 0.3247
         },
         {
           "city": "PATEROS",
           "actual": 0.0654,
-          "pred": 0.4216,
-          "error": 0.3562,
-          "abs_err": 0.3562
+          "pred": 0.5105,
+          "error": 0.4451,
+          "abs_err": 0.4451
         }
       ]
     },
     {
-      "model": "Random Forest Regressor",
-      "MAE": 0.2355,
-      "RMSE": 0.249,
-      "R2": 0.4365,
+      "model": "Ridge L2 Regression",
+      "MAE": 0.1552,
+      "RMSE": 0.2026,
+      "R2": 0.627,
       "unit": "Wd",
       "city_preds": [
         {
           "city": "CALOOCAN",
           "actual": 0.3778,
-          "pred": 0.5019,
-          "error": 0.1242,
-          "abs_err": 0.1242
+          "pred": 0.41,
+          "error": 0.0323,
+          "abs_err": 0.0323
         },
         {
           "city": "LAS PINAS",
           "actual": 0.697,
-          "pred": 0.5622,
-          "error": -0.1348,
-          "abs_err": 0.1348
+          "pred": 0.6276,
+          "error": -0.0694,
+          "abs_err": 0.0694
         },
         {
           "city": "MAKATI",
           "actual": 0.3341,
-          "pred": 0.4484,
-          "error": 0.1142,
-          "abs_err": 0.1142
+          "pred": 0.4208,
+          "error": 0.0867,
+          "abs_err": 0.0867
         },
         {
           "city": "MALABON",
           "actual": 0.1203,
-          "pred": 0.3761,
-          "error": 0.2558,
-          "abs_err": 0.2558
+          "pred": 0.2251,
+          "error": 0.1048,
+          "abs_err": 0.1048
         },
         {
           "city": "MANDALUYONG",
           "actual": 0.2705,
-          "pred": 0.5214,
-          "error": 0.2509,
-          "abs_err": 0.2509
+          "pred": 0.3643,
+          "error": 0.0938,
+          "abs_err": 0.0938
         },
         {
           "city": "MANILA",
           "actual": 1.0,
-          "pred": 0.6802,
-          "error": -0.3198,
-          "abs_err": 0.3198
+          "pred": 0.9454,
+          "error": -0.0546,
+          "abs_err": 0.0546
         },
         {
           "city": "MARIKINA",
           "actual": 0.4652,
-          "pred": 0.5488,
-          "error": 0.0836,
-          "abs_err": 0.0836
+          "pred": 0.5254,
+          "error": 0.0602,
+          "abs_err": 0.0602
         },
         {
           "city": "MUNTINLUPA",
           "actual": 0.3914,
-          "pred": 0.5281,
-          "error": 0.1366,
-          "abs_err": 0.1366
+          "pred": 0.4734,
+          "error": 0.082,
+          "abs_err": 0.082
         },
         {
           "city": "NAVOTAS",
           "actual": 0.0,
-          "pred": 0.2887,
-          "error": 0.2887,
-          "abs_err": 0.2887
+          "pred": -0.2429,
+          "error": -0.2429,
+          "abs_err": 0.2429
         },
         {
           "city": "PARANAQUE",
           "actual": 0.1122,
-          "pred": 0.4614,
-          "error": 0.3492,
-          "abs_err": 0.3492
+          "pred": -0.2791,
+          "error": -0.3913,
+          "abs_err": 0.3913
         },
         {
           "city": "PASAY",
           "actual": 0.813,
-          "pred": 0.5073,
-          "error": -0.3057,
-          "abs_err": 0.3057
+          "pred": 0.8647,
+          "error": 0.0518,
+          "abs_err": 0.0518
         },
         {
           "city": "PASIG",
           "actual": 0.9341,
-          "pred": 0.6534,
-          "error": -0.2808,
-          "abs_err": 0.2808
+          "pred": 0.9251,
+          "error": -0.009,
+          "abs_err": 0.009
         },
         {
           "city": "QUEZON CITY",
           "actual": 0.8733,
-          "pred": 0.6218,
-          "error": -0.2515,
-          "abs_err": 0.2515
+          "pred": 0.6018,
+          "error": -0.2715,
+          "abs_err": 0.2715
         },
         {
           "city": "SAN JUAN",
           "actual": 0.1248,
-          "pred": 0.4232,
-          "error": 0.2984,
-          "abs_err": 0.2984
+          "pred": 0.4201,
+          "error": 0.2953,
+          "abs_err": 0.2953
         },
         {
           "city": "TAGUIG",
           "actual": 0.8431,
-          "pred": 0.5393,
-          "error": -0.3037,
-          "abs_err": 0.3037
+          "pred": 0.7861,
+          "error": -0.057,
+          "abs_err": 0.057
         },
         {
           "city": "VALENZUELA",
           "actual": 0.7489,
-          "pred": 0.4744,
-          "error": -0.2745,
-          "abs_err": 0.2745
+          "pred": 0.3605,
+          "error": -0.3884,
+          "abs_err": 0.3884
         },
         {
           "city": "PATEROS",
           "actual": 0.0654,
-          "pred": 0.2965,
-          "error": 0.2311,
-          "abs_err": 0.2311
+          "pred": 0.4136,
+          "error": 0.3482,
+          "abs_err": 0.3482
+        }
+      ]
+    },
+    {
+      "model": "Gradient Boosting",
+      "MAE": 0.1048,
+      "RMSE": 0.1462,
+      "R2": 0.8058,
+      "unit": "Wd",
+      "city_preds": [
+        {
+          "city": "CALOOCAN",
+          "actual": 0.3778,
+          "pred": 0.1308,
+          "error": -0.247,
+          "abs_err": 0.247
+        },
+        {
+          "city": "LAS PINAS",
+          "actual": 0.697,
+          "pred": 0.8691,
+          "error": 0.172,
+          "abs_err": 0.172
+        },
+        {
+          "city": "MAKATI",
+          "actual": 0.3341,
+          "pred": 0.3393,
+          "error": 0.0052,
+          "abs_err": 0.0052
+        },
+        {
+          "city": "MALABON",
+          "actual": 0.1203,
+          "pred": 0.1527,
+          "error": 0.0323,
+          "abs_err": 0.0323
+        },
+        {
+          "city": "MANDALUYONG",
+          "actual": 0.2705,
+          "pred": 0.3718,
+          "error": 0.1013,
+          "abs_err": 0.1013
+        },
+        {
+          "city": "MANILA",
+          "actual": 1.0,
+          "pred": 0.9246,
+          "error": -0.0754,
+          "abs_err": 0.0754
+        },
+        {
+          "city": "MARIKINA",
+          "actual": 0.4652,
+          "pred": 0.7134,
+          "error": 0.2482,
+          "abs_err": 0.2482
+        },
+        {
+          "city": "MUNTINLUPA",
+          "actual": 0.3914,
+          "pred": 0.3958,
+          "error": 0.0043,
+          "abs_err": 0.0043
+        },
+        {
+          "city": "NAVOTAS",
+          "actual": 0.0,
+          "pred": 0.079,
+          "error": 0.079,
+          "abs_err": 0.079
+        },
+        {
+          "city": "PARANAQUE",
+          "actual": 0.1122,
+          "pred": 0.1665,
+          "error": 0.0543,
+          "abs_err": 0.0543
+        },
+        {
+          "city": "PASAY",
+          "actual": 0.813,
+          "pred": 0.7867,
+          "error": -0.0263,
+          "abs_err": 0.0263
+        },
+        {
+          "city": "PASIG",
+          "actual": 0.9341,
+          "pred": 0.8521,
+          "error": -0.082,
+          "abs_err": 0.082
+        },
+        {
+          "city": "QUEZON CITY",
+          "actual": 0.8733,
+          "pred": 0.532,
+          "error": -0.3414,
+          "abs_err": 0.3414
+        },
+        {
+          "city": "SAN JUAN",
+          "actual": 0.1248,
+          "pred": 0.1454,
+          "error": 0.0206,
+          "abs_err": 0.0206
+        },
+        {
+          "city": "TAGUIG",
+          "actual": 0.8431,
+          "pred": 0.8825,
+          "error": 0.0394,
+          "abs_err": 0.0394
+        },
+        {
+          "city": "VALENZUELA",
+          "actual": 0.7489,
+          "pred": 0.7584,
+          "error": 0.0095,
+          "abs_err": 0.0095
+        },
+        {
+          "city": "PATEROS",
+          "actual": 0.0654,
+          "pred": 0.3078,
+          "error": 0.2424,
+          "abs_err": 0.2424
         }
       ]
     }
   ],
   "task_B_beds": [
     {
-      "model": "kNN Regressor (Baseline)",
-      "MAE": 0.3652,
-      "RMSE": 0.6774,
-      "R2": 0.2226,
+      "model": "kNN (Baseline)",
+      "MAE": 0.3086,
+      "RMSE": 0.6468,
+      "R2": 0.2913,
       "unit": "beds/1k",
       "city_preds": [
         {
           "city": "CALOOCAN",
           "actual": 0.2164,
-          "pred": 0.3684,
-          "error": 0.152,
-          "abs_err": 0.152
+          "pred": 0.2769,
+          "error": 0.0605,
+          "abs_err": 0.0605
         },
         {
           "city": "LAS PINAS",
           "actual": 0.6948,
-          "pred": 0.3675,
-          "error": -0.3273,
-          "abs_err": 0.3273
+          "pred": 0.4972,
+          "error": -0.1976,
+          "abs_err": 0.1976
         },
         {
           "city": "MAKATI",
           "actual": 0.4044,
-          "pred": 0.8272,
-          "error": 0.4228,
-          "abs_err": 0.4228
+          "pred": 0.497,
+          "error": 0.0926,
+          "abs_err": 0.0926
         },
         {
           "city": "MALABON",
           "actual": 0.1111,
-          "pred": 0.4967,
-          "error": 0.3856,
-          "abs_err": 0.3856
+          "pred": 0.2445,
+          "error": 0.1334,
+          "abs_err": 0.1334
         },
         {
           "city": "MANDALUYONG",
           "actual": 3.4226,
-          "pred": 1.0448,
-          "error": -2.3778,
-          "abs_err": 2.3778
+          "pred": 1.0324,
+          "error": -2.3902,
+          "abs_err": 2.3902
         },
         {
           "city": "MANILA",
           "actual": 0.7713,
-          "pred": 0.548,
-          "error": -0.2233,
-          "abs_err": 0.2233
+          "pred": 0.8457,
+          "error": 0.0744,
+          "abs_err": 0.0744
         },
         {
           "city": "MARIKINA",
           "actual": 0.4668,
-          "pred": 0.461,
-          "error": -0.0058,
-          "abs_err": 0.0058
+          "pred": 0.4786,
+          "error": 0.0118,
+          "abs_err": 0.0118
         },
         {
           "city": "MUNTINLUPA",
           "actual": 0.3342,
-          "pred": 0.4712,
-          "error": 0.137,
-          "abs_err": 0.137
+          "pred": 0.559,
+          "error": 0.2248,
+          "abs_err": 0.2248
         },
         {
           "city": "NAVOTAS",
           "actual": 0.1765,
-          "pred": 0.2143,
-          "error": 0.0378,
-          "abs_err": 0.0378
+          "pred": 0.2136,
+          "error": 0.0371,
+          "abs_err": 0.0371
         },
         {
           "city": "PARANAQUE",
           "actual": 0.1986,
-          "pred": 0.3175,
-          "error": 0.1189,
-          "abs_err": 0.1189
+          "pred": 0.2929,
+          "error": 0.0943,
+          "abs_err": 0.0943
         },
         {
           "city": "PASAY",
           "actual": 0.2785,
-          "pred": 0.4736,
-          "error": 0.1951,
-          "abs_err": 0.1951
+          "pred": 0.5754,
+          "error": 0.2969,
+          "abs_err": 0.2969
         },
         {
           "city": "PASIG",
           "actual": 0.587,
-          "pred": 0.4389,
-          "error": -0.1481,
-          "abs_err": 0.1481
+          "pred": 0.5967,
+          "error": 0.0097,
+          "abs_err": 0.0097
         },
         {
           "city": "QUEZON CITY",
           "actual": 0.696,
-          "pred": 0.5459,
-          "error": -0.1501,
-          "abs_err": 0.1501
+          "pred": 0.4322,
+          "error": -0.2638,
+          "abs_err": 0.2638
         },
         {
           "city": "SAN JUAN",
           "actual": 1.6165,
-          "pred": 0.4083,
-          "error": -1.2082,
-          "abs_err": 1.2082
+          "pred": 0.5835,
+          "error": -1.033,
+          "abs_err": 1.033
         },
         {
           "city": "TAGUIG",
           "actual": 0.6069,
-          "pred": 0.3631,
-          "error": -0.2438,
-          "abs_err": 0.2438
+          "pred": 0.4824,
+          "error": -0.1245,
+          "abs_err": 0.1245
         },
         {
           "city": "VALENZUELA",
           "actual": 0.3826,
-          "pred": 0.3996,
-          "error": 0.017,
-          "abs_err": 0.017
+          "pred": 0.5184,
+          "error": 0.1358,
+          "abs_err": 0.1358
         },
         {
           "city": "PATEROS",
           "actual": 0.3607,
-          "pred": 0.419,
-          "error": 0.0583,
-          "abs_err": 0.0583
+          "pred": 0.426,
+          "error": 0.0653,
+          "abs_err": 0.0653
         }
       ]
     },
     {
-      "model": "Random Forest Regressor",
-      "MAE": 0.3965,
-      "RMSE": 0.7267,
-      "R2": 0.1053,
+      "model": "Ridge L2 Regression",
+      "MAE": 0.1593,
+      "RMSE": 0.211,
+      "R2": 0.9246,
       "unit": "beds/1k",
       "city_preds": [
         {
           "city": "CALOOCAN",
           "actual": 0.2164,
-          "pred": 0.436,
-          "error": 0.2196,
-          "abs_err": 0.2196
+          "pred": 0.0798,
+          "error": -0.1366,
+          "abs_err": 0.1366
         },
         {
           "city": "LAS PINAS",
           "actual": 0.6948,
-          "pred": 0.5891,
-          "error": -0.1057,
-          "abs_err": 0.1057
+          "pred": 0.6347,
+          "error": -0.0601,
+          "abs_err": 0.0601
         },
         {
           "city": "MAKATI",
           "actual": 0.4044,
-          "pred": 0.9125,
-          "error": 0.5081,
-          "abs_err": 0.5081
+          "pred": 0.5307,
+          "error": 0.1263,
+          "abs_err": 0.1263
         },
         {
           "city": "MALABON",
           "actual": 0.1111,
-          "pred": 0.4662,
-          "error": 0.3551,
-          "abs_err": 0.3551
+          "pred": 0.1064,
+          "error": -0.0047,
+          "abs_err": 0.0047
         },
         {
           "city": "MANDALUYONG",
           "actual": 3.4226,
-          "pred": 0.7001,
-          "error": -2.7225,
-          "abs_err": 2.7225
+          "pred": 3.2705,
+          "error": -0.1521,
+          "abs_err": 0.1521
         },
         {
           "city": "MANILA",
           "actual": 0.7713,
-          "pred": 0.9786,
-          "error": 0.2073,
-          "abs_err": 0.2073
+          "pred": 1.2335,
+          "error": 0.4622,
+          "abs_err": 0.4622
         },
         {
           "city": "MARIKINA",
           "actual": 0.4668,
-          "pred": 0.5552,
-          "error": 0.0884,
-          "abs_err": 0.0884
+          "pred": 0.4273,
+          "error": -0.0395,
+          "abs_err": 0.0395
         },
         {
           "city": "MUNTINLUPA",
           "actual": 0.3342,
-          "pred": 0.6835,
-          "error": 0.3493,
-          "abs_err": 0.3493
+          "pred": 0.3969,
+          "error": 0.0627,
+          "abs_err": 0.0627
         },
         {
           "city": "NAVOTAS",
           "actual": 0.1765,
-          "pred": 0.4005,
-          "error": 0.224,
-          "abs_err": 0.224
+          "pred": 0.5297,
+          "error": 0.3532,
+          "abs_err": 0.3532
         },
         {
           "city": "PARANAQUE",
           "actual": 0.1986,
-          "pred": 0.3752,
-          "error": 0.1766,
-          "abs_err": 0.1766
+          "pred": 0.2676,
+          "error": 0.069,
+          "abs_err": 0.069
         },
         {
           "city": "PASAY",
           "actual": 0.2785,
-          "pred": 0.9021,
-          "error": 0.6236,
-          "abs_err": 0.6236
+          "pred": 0.203,
+          "error": -0.0755,
+          "abs_err": 0.0755
         },
         {
           "city": "PASIG",
           "actual": 0.587,
-          "pred": 0.7421,
-          "error": 0.1551,
-          "abs_err": 0.1551
+          "pred": 0.4631,
+          "error": -0.1239,
+          "abs_err": 0.1239
         },
         {
           "city": "QUEZON CITY",
           "actual": 0.696,
-          "pred": 0.8591,
-          "error": 0.1631,
-          "abs_err": 0.1631
+          "pred": 0.8522,
+          "error": 0.1562,
+          "abs_err": 0.1562
         },
         {
           "city": "SAN JUAN",
           "actual": 1.6165,
-          "pred": 0.9787,
-          "error": -0.6378,
-          "abs_err": 0.6378
+          "pred": 1.183,
+          "error": -0.4335,
+          "abs_err": 0.4335
         },
         {
           "city": "TAGUIG",
           "actual": 0.6069,
-          "pred": 0.6082,
-          "error": 0.0013,
-          "abs_err": 0.0013
+          "pred": 0.455,
+          "error": -0.1519,
+          "abs_err": 0.1519
         },
         {
           "city": "VALENZUELA",
           "actual": 0.3826,
-          "pred": 0.4641,
-          "error": 0.0815,
-          "abs_err": 0.0815
+          "pred": 0.6831,
+          "error": 0.3005,
+          "abs_err": 0.3005
         },
         {
           "city": "PATEROS",
           "actual": 0.3607,
-          "pred": 0.4829,
-          "error": 0.1222,
-          "abs_err": 0.1222
+          "pred": 0.3598,
+          "error": -0.0009,
+          "abs_err": 0.0009
+        }
+      ]
+    },
+    {
+      "model": "Gradient Boosting",
+      "MAE": 0.4352,
+      "RMSE": 0.7018,
+      "R2": 0.1657,
+      "unit": "beds/1k",
+      "city_preds": [
+        {
+          "city": "CALOOCAN",
+          "actual": 0.2164,
+          "pred": 0.4407,
+          "error": 0.2243,
+          "abs_err": 0.2243
+        },
+        {
+          "city": "LAS PINAS",
+          "actual": 0.6948,
+          "pred": 0.5671,
+          "error": -0.1277,
+          "abs_err": 0.1277
+        },
+        {
+          "city": "MAKATI",
+          "actual": 0.4044,
+          "pred": -0.0198,
+          "error": -0.4242,
+          "abs_err": 0.4242
+        },
+        {
+          "city": "MALABON",
+          "actual": 0.1111,
+          "pred": 0.6095,
+          "error": 0.4984,
+          "abs_err": 0.4984
+        },
+        {
+          "city": "MANDALUYONG",
+          "actual": 3.4226,
+          "pred": 1.1184,
+          "error": -2.3042,
+          "abs_err": 2.3042
+        },
+        {
+          "city": "MANILA",
+          "actual": 0.7713,
+          "pred": 2.0606,
+          "error": 1.2893,
+          "abs_err": 1.2893
+        },
+        {
+          "city": "MARIKINA",
+          "actual": 0.4668,
+          "pred": 0.3634,
+          "error": -0.1034,
+          "abs_err": 0.1034
+        },
+        {
+          "city": "MUNTINLUPA",
+          "actual": 0.3342,
+          "pred": 0.8925,
+          "error": 0.5583,
+          "abs_err": 0.5583
+        },
+        {
+          "city": "NAVOTAS",
+          "actual": 0.1765,
+          "pred": 0.3281,
+          "error": 0.1516,
+          "abs_err": 0.1516
+        },
+        {
+          "city": "PARANAQUE",
+          "actual": 0.1986,
+          "pred": 0.598,
+          "error": 0.3994,
+          "abs_err": 0.3994
+        },
+        {
+          "city": "PASAY",
+          "actual": 0.2785,
+          "pred": 0.6692,
+          "error": 0.3907,
+          "abs_err": 0.3907
+        },
+        {
+          "city": "PASIG",
+          "actual": 0.587,
+          "pred": 0.645,
+          "error": 0.058,
+          "abs_err": 0.058
+        },
+        {
+          "city": "QUEZON CITY",
+          "actual": 0.696,
+          "pred": 0.7288,
+          "error": 0.0328,
+          "abs_err": 0.0328
+        },
+        {
+          "city": "SAN JUAN",
+          "actual": 1.6165,
+          "pred": 1.1913,
+          "error": -0.4252,
+          "abs_err": 0.4252
+        },
+        {
+          "city": "TAGUIG",
+          "actual": 0.6069,
+          "pred": 0.4153,
+          "error": -0.1916,
+          "abs_err": 0.1916
+        },
+        {
+          "city": "VALENZUELA",
+          "actual": 0.3826,
+          "pred": 0.3019,
+          "error": -0.0807,
+          "abs_err": 0.0807
+        },
+        {
+          "city": "PATEROS",
+          "actual": 0.3607,
+          "pred": 0.222,
+          "error": -0.1387,
+          "abs_err": 0.1387
         }
       ]
     }
   ],
   "feat_imp_wd": [
     {
-      "feature": "nearest_km_x_poverty",
-      "label": "Distance \u00d7 Poverty (compound geographic barrier)",
-      "importance": 0.16779782259343834
-    },
-    {
       "feature": "nearest_public_tertiary_km",
       "label": "Distance to Nearest Public L3 Hospital (km)",
-      "importance": 0.15256821750027313
-    },
-    {
-      "feature": "population_2020",
-      "label": "Total Population (2020 Census)",
-      "importance": 0.11018584849450892
-    },
-    {
-      "feature": "acute_care_supply_index",
-      "label": "Acute Care Supply Index (PCA-1)",
-      "importance": 0.0982835914340907
-    },
-    {
-      "feature": "level3_per100k",
-      "label": "Level-3 Hospital Density (per 100k)",
-      "importance": 0.05747462307000901
-    },
-    {
-      "feature": "specialist_support_index",
-      "label": "Specialist Support Index (PCA-3)",
-      "importance": 0.05460253302670831
-    },
-    {
-      "feature": "public_l3_density",
-      "label": "Public L3 Share of Total Supply",
-      "importance": 0.04417657800587598
-    },
-    {
-      "feature": "public_primary_per10k",
-      "label": "Public Primary Care Units (per 10k)",
-      "importance": 0.0418980326990863
-    },
-    {
-      "feature": "beds_per_1000",
-      "label": "Bed Capacity (per 1,000 residents)",
-      "importance": 0.0416843178722126
-    },
-    {
-      "feature": "weighted_score_per10k",
-      "label": "Quality-Weighted Supply Score (per 10k)",
-      "importance": 0.03784450053690234
-    },
-    {
-      "feature": "beds_per_poor_1000",
-      "label": "Effective Bed Supply (poverty-discounted)",
-      "importance": 0.0355325434480084
-    },
-    {
-      "feature": "poverty_x_private",
-      "label": "Poverty \u00d7 Private Ownership (Double Barrier)",
-      "importance": 0.034545443205966635
-    },
-    {
-      "feature": "l3_per_poor_resident",
-      "label": "Effective L3 Access (poverty-discounted)",
-      "importance": 0.0280850191804841
+      "importance": 0.8254503317000935
     },
     {
       "feature": "private_ownership_pct",
       "label": "Private Ownership Share (%)",
-      "importance": 0.026569301346027304
+      "importance": 0.04820668115149624
     },
     {
-      "feature": "private_to_public_ratio",
-      "label": "Private-to-Public Facility Ratio",
-      "importance": 0.020689232202827066
+      "feature": "nearest_km_x_poverty",
+      "label": "Distance \u00d7 Poverty (compound geographic barrier)",
+      "importance": 0.04319283753446608
+    },
+    {
+      "feature": "beds_per_poor_1000",
+      "label": "Effective Bed Supply (poverty-discounted)",
+      "importance": 0.028567132451152583
+    },
+    {
+      "feature": "level3_per100k",
+      "label": "Level-3 Hospital Density (per 100k)",
+      "importance": 0.020975713808551195
+    },
+    {
+      "feature": "l3_per_poor_resident",
+      "label": "Effective L3 Access (poverty-discounted)",
+      "importance": 0.013657102714180148
     },
     {
       "feature": "poverty_incidence_2023_pct",
       "label": "Poverty Incidence (%, 2023)",
-      "importance": 0.013095871257101165
+      "importance": 0.011252419170366694
     },
     {
-      "feature": "hospital_density_per10k",
-      "label": "Hospital Density (per 10k residents)",
-      "importance": 0.012716577047486544
-    },
-    {
-      "feature": "facility_density_per10k",
-      "label": "Facility Density (per 10k residents)",
-      "importance": 0.00846636900191872
-    },
-    {
-      "feature": "primary_network_index",
-      "label": "Primary Care Network Index (PCA-2)",
-      "importance": 0.005532469455749386
-    },
-    {
-      "feature": "growth_x_private_deficit",
-      "label": "Growth Pressure on Public Capacity",
-      "importance": 0.0047918731422035956
-    },
-    {
-      "feature": "pop_growth_rate_pct",
-      "label": "Annual Population Growth Rate (%)",
-      "importance": 0.0034592354791214384
+      "feature": "beds_per_1000",
+      "label": "Bed Capacity (per 1,000 residents)",
+      "importance": 0.00869778146969333
     }
   ],
   "feat_imp_beds": [
     {
-      "feature": "beds_per_1000",
-      "label": "Bed Capacity (per 1,000 residents)",
-      "importance": 0.1436266796163274
-    },
-    {
-      "feature": "level3_per100k",
-      "label": "Level-3 Hospital Density (per 100k)",
-      "importance": 0.1179406826301653
-    },
-    {
       "feature": "beds_per_poor_1000",
       "label": "Effective Bed Supply (poverty-discounted)",
-      "importance": 0.10213905421993079
+      "importance": 0.3478252107072615
     },
     {
-      "feature": "l3_per_poor_resident",
-      "label": "Effective L3 Access (poverty-discounted)",
-      "importance": 0.10147533069461236
-    },
-    {
-      "feature": "growth_x_private_deficit",
-      "label": "Growth Pressure on Public Capacity",
-      "importance": 0.0888681536851233
-    },
-    {
-      "feature": "pop_growth_rate_pct",
-      "label": "Annual Population Growth Rate (%)",
-      "importance": 0.08262655216163714
-    },
-    {
-      "feature": "facility_density_per10k",
-      "label": "Facility Density (per 10k residents)",
-      "importance": 0.07211179441755317
-    },
-    {
-      "feature": "weighted_score_per10k",
-      "label": "Quality-Weighted Supply Score (per 10k)",
-      "importance": 0.06276072868616196
-    },
-    {
-      "feature": "public_primary_per10k",
-      "label": "Public Primary Care Units (per 10k)",
-      "importance": 0.04705202147274064
-    },
-    {
-      "feature": "public_l3_density",
-      "label": "Public L3 Share of Total Supply",
-      "importance": 0.0364447915535171
-    },
-    {
-      "feature": "hospital_density_per10k",
-      "label": "Hospital Density (per 10k residents)",
-      "importance": 0.03309585278131698
-    },
-    {
-      "feature": "acute_care_supply_index",
-      "label": "Acute Care Supply Index (PCA-1)",
-      "importance": 0.019443128427784867
-    },
-    {
-      "feature": "nearest_public_tertiary_km",
-      "label": "Distance to Nearest Public L3 Hospital (km)",
-      "importance": 0.018260348875085444
-    },
-    {
-      "feature": "nearest_km_x_poverty",
-      "label": "Distance \u00d7 Poverty (compound geographic barrier)",
-      "importance": 0.01820921296150159
-    },
-    {
-      "feature": "population_2020",
-      "label": "Total Population (2020 Census)",
-      "importance": 0.017460521229613512
-    },
-    {
-      "feature": "specialist_support_index",
-      "label": "Specialist Support Index (PCA-3)",
-      "importance": 0.011723831412275097
+      "feature": "beds_per_1000",
+      "label": "Bed Capacity (per 1,000 residents)",
+      "importance": 0.34696648196891827
     },
     {
       "feature": "private_ownership_pct",
       "label": "Private Ownership Share (%)",
-      "importance": 0.010193930287134605
+      "importance": 0.1983343650464904
+    },
+    {
+      "feature": "nearest_km_x_poverty",
+      "label": "Distance \u00d7 Poverty (compound geographic barrier)",
+      "importance": 0.1408269005803861
+    },
+    {
+      "feature": "nearest_public_tertiary_km",
+      "label": "Distance to Nearest Public L3 Hospital (km)",
+      "importance": 0.09932269160665828
+    },
+    {
+      "feature": "l3_per_poor_resident",
+      "label": "Effective L3 Access (poverty-discounted)",
+      "importance": 0.015754705383475235
+    },
+    {
+      "feature": "level3_per100k",
+      "label": "Level-3 Hospital Density (per 100k)",
+      "importance": 0.011946522651108606
     },
     {
       "feature": "poverty_incidence_2023_pct",
       "label": "Poverty Incidence (%, 2023)",
-      "importance": 0.009517991869868977
-    },
-    {
-      "feature": "private_to_public_ratio",
-      "label": "Private-to-Public Facility Ratio",
-      "importance": 0.0038037539182658106
-    },
-    {
-      "feature": "primary_network_index",
-      "label": "Primary Care Network Index (PCA-2)",
-      "importance": 0.0025382994966874853
-    },
-    {
-      "feature": "poverty_x_private",
-      "label": "Poverty \u00d7 Private Ownership (Double Barrier)",
-      "importance": 0.0007073396026965467
+      "importance": 0.006787807705100148
     }
   ],
   "ranking": [
@@ -810,7 +896,8 @@
       "pub_beds_1000": 0.176,
       "nearest_km": 6.056,
       "poverty_pct": 2.5,
-      "private_pct": 37.1
+      "private_pct": 37.1,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 2,
@@ -819,7 +906,8 @@
       "pub_beds_1000": 0.361,
       "nearest_km": 2.786,
       "poverty_pct": 0.8,
-      "private_pct": 64.3
+      "private_pct": 64.3,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 3,
@@ -828,7 +916,8 @@
       "pub_beds_1000": 0.199,
       "nearest_km": 6.292,
       "poverty_pct": 0.6,
-      "private_pct": 81.0
+      "private_pct": 81.0,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 4,
@@ -837,7 +926,8 @@
       "pub_beds_1000": 0.111,
       "nearest_km": 4.806,
       "poverty_pct": 1.5,
-      "private_pct": 63.9
+      "private_pct": 63.9,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 5,
@@ -846,7 +936,8 @@
       "pub_beds_1000": 1.616,
       "nearest_km": 3.806,
       "poverty_pct": 0.7,
-      "private_pct": 54.0
+      "private_pct": 54.0,
+      "paradox_zone": "High Paradox"
     },
     {
       "rank": 6,
@@ -855,7 +946,8 @@
       "pub_beds_1000": 3.423,
       "nearest_km": 3.827,
       "poverty_pct": 0.3,
-      "private_pct": 68.1
+      "private_pct": 68.1,
+      "paradox_zone": "High Paradox"
     },
     {
       "rank": 7,
@@ -864,7 +956,8 @@
       "pub_beds_1000": 0.404,
       "nearest_km": 3.108,
       "poverty_pct": 0.6,
-      "private_pct": 82.5
+      "private_pct": 82.5,
+      "paradox_zone": "High Paradox"
     },
     {
       "rank": 8,
@@ -873,7 +966,8 @@
       "pub_beds_1000": 0.216,
       "nearest_km": 3.715,
       "poverty_pct": 1.9,
-      "private_pct": 67.2
+      "private_pct": 67.2,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 9,
@@ -882,7 +976,8 @@
       "pub_beds_1000": 0.334,
       "nearest_km": 2.359,
       "poverty_pct": 0.1,
-      "private_pct": 75.2
+      "private_pct": 75.2,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 10,
@@ -891,7 +986,8 @@
       "pub_beds_1000": 0.467,
       "nearest_km": 1.826,
       "poverty_pct": 0.7,
-      "private_pct": 72.2
+      "private_pct": 72.2,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 11,
@@ -900,7 +996,8 @@
       "pub_beds_1000": 0.695,
       "nearest_km": 1.033,
       "poverty_pct": 0.7,
-      "private_pct": 64.1
+      "private_pct": 64.1,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 12,
@@ -909,7 +1006,8 @@
       "pub_beds_1000": 0.383,
       "nearest_km": 0.956,
       "poverty_pct": 0.7,
-      "private_pct": 47.4
+      "private_pct": 47.4,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 13,
@@ -918,7 +1016,8 @@
       "pub_beds_1000": 0.278,
       "nearest_km": 0.0,
       "poverty_pct": 0.5,
-      "private_pct": 82.4
+      "private_pct": 82.4,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 14,
@@ -927,7 +1026,8 @@
       "pub_beds_1000": 0.607,
       "nearest_km": 0.882,
       "poverty_pct": 2.0,
-      "private_pct": 64.9
+      "private_pct": 64.9,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 15,
@@ -936,7 +1036,8 @@
       "pub_beds_1000": 0.696,
       "nearest_km": 1.571,
       "poverty_pct": 0.7,
-      "private_pct": 79.0
+      "private_pct": 79.0,
+      "paradox_zone": "Low Paradox"
     },
     {
       "rank": 16,
@@ -945,7 +1046,8 @@
       "pub_beds_1000": 0.587,
       "nearest_km": 0.456,
       "poverty_pct": 2.1,
-      "private_pct": 70.6
+      "private_pct": 70.6,
+      "paradox_zone": "Medium Paradox"
     },
     {
       "rank": 17,
@@ -954,7 +1056,8 @@
       "pub_beds_1000": 0.771,
       "nearest_km": 0.891,
       "poverty_pct": 1.6,
-      "private_pct": 79.5
+      "private_pct": 79.5,
+      "paradox_zone": "Low Paradox"
     }
   ]
 }
