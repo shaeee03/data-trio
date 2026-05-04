@@ -1,6 +1,6 @@
 ====================================================================
 DB VALIDATION REPORT
-Generated: 2026-05-04 17:22:49
+Generated: 2026-05-04 19:20:30
 Database:  ../data/database_output/healthcare_vulnerability.db
 ====================================================================
 
@@ -32,10 +32,10 @@ Database:  ../data/database_output/healthcare_vulnerability.db
 ── SCHEMA ───────────────────────────────────────────────────────
   dim_facilities: 13 columns
     facility_code, facility_name, facility_type, facility_category, ownership_major, is_private, is_licensed, city_norm, barangay, service_capability, doh_level, service_level_weight, bed_capacity
-  dim_cities: 19 columns
-    city_norm, population_2020, population_2024, pop_growth_rate_pct, total_facilities, hospitals, level3_hospitals, level2_hospitals, level1_hospitals, total_bed_capacity, weighted_facility_score, private_facility_count, gov_facility_count, private_ownership_pct, private_to_public_ratio, poverty_threshold_2023_php, poverty_incidence_2021_pct, poverty_incidence_2023_pct, nearest_public_tertiary_km
-  fact_vulnerability: 20 columns
-    city_norm, facility_density_per10k, hospital_density_per10k, beds_per_1000, weighted_score_per10k, level3_per100k, public_primary_per10k, private_ownership_pct, private_to_public_ratio, poverty_incidence_2023_pct, poverty_threshold_2023_php, econ_friction_ratio, population_2020, pop_growth_rate_pct, pca_emergency, pca_diagnostic, pca_primary, nearest_public_tertiary_km, vulnerability_label, vulnerability_score
+  dim_cities: 22 columns
+    city_norm, population_2020, population_2024, pop_growth_rate_pct, total_facilities, hospitals, level3_hospitals, level2_hospitals, level1_hospitals, total_bed_capacity, weighted_facility_score, private_facility_count, gov_facility_count, private_ownership_pct, private_to_public_ratio, poverty_threshold_2023_php, poverty_incidence_2021_pct, poverty_incidence_2023_pct, nearest_public_tertiary_km, accessibility_gap_score, effective_public_beds_per1000, market_exclusion_index
+  fact_vulnerability: 23 columns
+    city_norm, facility_density_per10k, hospital_density_per10k, beds_per_1000, weighted_score_per10k, level3_per100k, public_primary_per10k, private_ownership_pct, private_to_public_ratio, poverty_incidence_2023_pct, poverty_threshold_2023_php, econ_friction_ratio, population_2020, pop_growth_rate_pct, pca_emergency, pca_diagnostic, pca_primary, nearest_public_tertiary_km, accessibility_gap_score, effective_public_beds_per1000, market_exclusion_index, vulnerability_label, vulnerability_score
   pca_components: 4 columns
     city_norm, pca_emergency, pca_diagnostic, pca_primary
 

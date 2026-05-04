@@ -187,7 +187,10 @@ if SQLALCHEMY_AVAILABLE:
         poverty_threshold_2023_php = Column(Float)
         poverty_incidence_2021_pct = Column(Float)
         poverty_incidence_2023_pct = Column(Float)
-        nearest_public_tertiary_km = Column(Float)   # TARGET VARIABLE
+        nearest_public_tertiary_km     = Column(Float)   # geometric reference
+        accessibility_gap_score        = Column(Float)   # composite target
+        effective_public_beds_per1000  = Column(Float)   # public bed depth
+        market_exclusion_index         = Column(Float)   # private-gating ratio
 
     class FactVulnerability(Base):
         """
@@ -218,9 +221,12 @@ if SQLALCHEMY_AVAILABLE:
         pca_diagnostic             = Column(Float)  # PC2
         pca_primary                = Column(Float)  # PC3
         # ── Target + label ─────────────────────────────────────────────
-        nearest_public_tertiary_km = Column(Float)  # regression target
-        vulnerability_label        = Column(String)  # classification target
-        vulnerability_score        = Column(Integer) # 0=Low,1=Med,2=High
+        nearest_public_tertiary_km     = Column(Float)   # geometric reference
+        accessibility_gap_score        = Column(Float)   # PRIMARY regression target
+        effective_public_beds_per1000  = Column(Float)   # SECONDARY regression target
+        market_exclusion_index         = Column(Float)   # private-gating index
+        vulnerability_label            = Column(String)  # classification target
+        vulnerability_score            = Column(Integer) # 0=Low,1=Med,2=High
 
     class PcaComponents(Base):
         """
@@ -415,7 +421,10 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
             poverty_threshold_2023_php REAL,
             poverty_incidence_2021_pct REAL,
             poverty_incidence_2023_pct REAL,
-            nearest_public_tertiary_km REAL
+            nearest_public_tertiary_km    REAL,
+            accessibility_gap_score       REAL,
+            effective_public_beds_per1000 REAL,
+            market_exclusion_index        REAL
         )
     """)
     city_keep = ["city_norm","population_2020","population_2024","pop_growth_rate_pct",
@@ -424,7 +433,8 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
                  "private_facility_count","gov_facility_count","private_ownership_pct",
                  "private_to_public_ratio","poverty_threshold_2023_php",
                  "poverty_incidence_2021_pct","poverty_incidence_2023_pct",
-                 "nearest_public_tertiary_km"]
+                 "nearest_public_tertiary_km","accessibility_gap_score",
+                 "effective_public_beds_per1000","market_exclusion_index"]
     city_df = merged_df[[c for c in city_keep if c in merged_df.columns]].copy()
     city_df = city_df.where(pd.notnull(city_df), None)
     city_df.to_sql("dim_cities", conn, if_exists="append", index=False)
@@ -462,9 +472,12 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
             pca_emergency              REAL,
             pca_diagnostic             REAL,
             pca_primary                REAL,
-            nearest_public_tertiary_km REAL,
-            vulnerability_label        TEXT,
-            vulnerability_score        INTEGER
+            nearest_public_tertiary_km    REAL,
+            accessibility_gap_score       REAL,
+            effective_public_beds_per1000 REAL,
+            market_exclusion_index        REAL,
+            vulnerability_label           TEXT,
+            vulnerability_score           INTEGER
         )
     """)
     fact_keep = ["city_norm","facility_density_per10k","hospital_density_per10k",
@@ -473,7 +486,9 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, db_path):
                  "private_to_public_ratio","poverty_incidence_2023_pct",
                  "poverty_threshold_2023_php","econ_friction_ratio",
                  "population_2020","pop_growth_rate_pct",
-                 "nearest_public_tertiary_km","vulnerability_label","vulnerability_score"]
+                 "nearest_public_tertiary_km","accessibility_gap_score",
+                 "effective_public_beds_per1000","market_exclusion_index",
+                 "vulnerability_label","vulnerability_score"]
     fact_df = merged_df[[c for c in fact_keep if c in merged_df.columns]].copy()
     for col in PCA_COMPONENT_LABELS:
         fact_df[col] = pca_df[col].values
@@ -530,6 +545,9 @@ def _create_view(conn, sqlalchemy_mode: bool):
         SELECT
             f.city_norm,
             f.nearest_public_tertiary_km,
+            f.accessibility_gap_score,
+            f.effective_public_beds_per1000,
+            f.market_exclusion_index,
             f.vulnerability_label,
             f.vulnerability_score,
             f.poverty_incidence_2023_pct,

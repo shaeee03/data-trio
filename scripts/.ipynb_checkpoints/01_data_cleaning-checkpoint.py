@@ -875,75 +875,121 @@ def clean_poverty():
 
 # ── Step 4: Merge and generate full feature matrix ─────────────────────────
 
+
 def merge_all(city_facility_stats, population_df, poverty_df):
     """
     Joins all three feature dimensions into a single feature matrix and
-    computes the TARGET VARIABLE: nearest_public_tertiary_km.
+    computes TARGET VARIABLES for the ML model.
 
-    Also computes the Vulnerability Label for classification tasks.
+    TARGET VARIABLES
+    ----------------
+    nearest_public_tertiary_km  — kept for reference and Wd formula input.
+        IMPORTANT: This is a FIXED GEOMETRIC CONSTANT computed from city
+        centroids and hospital coordinates. It cannot be predicted from
+        socioeconomic features — do NOT use as an ML regression target.
+
+    accessibility_gap_score     — PRIMARY regression target [0–1, higher=worse]
+        A composite index that IS causally driven by the features:
+          Component A (40%): Poverty-weighted distance score
+            = poverty_frac × (dist / max_dist)
+          Component B (40%): Private dominance score
+            = private_ownership_pct × (1 - public_l3_share)
+          Component C (20%): L3 desert penalty
+            = 1 if city has zero L3 hospitals of any kind, else 0
+        This measures how much economic and structural barriers compound
+        geographic distance — directly predictable from poverty + ownership.
+
+    effective_public_beds_per1000 — SECONDARY regression target
+        = (gov_facility_count / total_facilities) × beds_per_1000
+        Measures real inpatient capacity available to the poor.
+        Driven by: beds_per_1000, private_ownership_pct, population.
+        A city with 5 beds/1000 but 90% private has ~0.5 effective beds.
+
+    market_exclusion_index      — TERTIARY target (used in Wd formula)
+        = private_level3_beds / (gov_beds + 1)
+        How many private tertiary beds exist per government bed.
+        High = the hospital infrastructure is "gated" for the poor.
     """
-    print("\n[4/4] Merging datasets and computing target variable...")
+    print("\n[4/4] Merging datasets and computing target variables...")
 
     df = population_df.copy()
     df = df.merge(city_facility_stats, on="city_norm", how="left")
     df = df.merge(poverty_df,          on="city_norm", how="left")
 
-    # ── Geospatial target variable ────────────────────────────────────────
-    # The Effective Service Radius: how far (km) from each city's
-    # centroid to the nearest PUBLIC tertiary hospital.
-    # High values → residents must travel far → high inaccessibility.
+    # ── Geospatial reference variable (NOT the ML target) ─────────────────
     df["nearest_public_tertiary_km"] = df["city_norm"].apply(
         nearest_public_tertiary_km
     )
 
     # ── SUPPLY density features (normalised per population) ──────────────
-    # Denominator: population_2024, not population_2020.
-    # The NHFR data reflects ~2023–2025 licensing records. Using 2020
-    # population would overstate facility density for fast-growing cities
-    # (Taguig +6.9%, Mandaluyong +9.4%, Pasig +6.2% from 2020→2024) by
-    # dividing current supply counts by a smaller-than-actual population.
-    # population_2024 is the closest available PSA estimate to the NHFR
-    # reference period and minimises this systematic directional bias.
-    # population_2020 is retained in the output for reference only.
     pop = df["population_2024"].replace(0, np.nan)
 
-    df["facility_density_per10k"]      = (df["total_facilities"]       / pop * 10_000).round(2)
-    df["hospital_density_per10k"]      = (df["hospitals"]              / pop * 10_000).round(4)
-    df["beds_per_1000"]                = (df["total_bed_capacity"]     / pop * 1_000 ).round(4)
-    df["weighted_score_per10k"]        = (df["weighted_facility_score"]/ pop * 10_000).round(4)
-    df["public_primary_per10k"]        = (df["public_primary_care_score"] / pop * 10_000).round(4)
-    df["level3_per100k"]               = (df["level3_hospitals"]       / pop * 100_000).round(4)
+    df["facility_density_per10k"]  = (df["total_facilities"]          / pop * 10_000).round(2)
+    df["hospital_density_per10k"]  = (df["hospitals"]                 / pop * 10_000).round(4)
+    df["beds_per_1000"]            = (df["total_bed_capacity"]        / pop * 1_000 ).round(4)
+    df["weighted_score_per10k"]    = (df["weighted_facility_score"]   / pop * 10_000).round(4)
+    df["public_primary_per10k"]    = (df["public_primary_care_score"] / pop * 10_000).round(4)
+    df["level3_per100k"]           = (df["level3_hospitals"]          / pop * 100_000).round(4)
 
     # ── BARRIER economic friction ratio ───────────────────────────────────
-    # Median public hospital consultation cost (DOH) ≈ PHP 100 outpatient.
-    # Ratio of annual cost burden to poverty threshold.
-    MEDIAN_HOSP_ANNUAL_COST_PHP = 5_000   # conservative estimate
+    MEDIAN_HOSP_ANNUAL_COST_PHP = 5_000
     df["econ_friction_ratio"] = (
         MEDIAN_HOSP_ANNUAL_COST_PHP / df["poverty_threshold_2023_php"].replace(0, np.nan)
     ).round(4)
 
-    # ── DEMAND growth pressure ────────────────────────────────────────────
-    # Cities with high growth and stagnant facility supply face future strain.
-    df["pop_growth_rate_pct"] = pd.to_numeric(
-        df["pop_growth_rate_pct"], errors="coerce"
-    )
+    df["pop_growth_rate_pct"] = pd.to_numeric(df["pop_growth_rate_pct"], errors="coerce")
 
-    # ── Vulnerability Label (for ML classification task) ──────────────────
-    # High = low supply density AND high poverty AND far from tertiary care
-    # Computed from medians so the rule is data-driven, not hard-coded.
+    # ── Derived ownership features ────────────────────────────────────────
+    total_gov_beds = df["total_bed_capacity"] * (1 - df["private_ownership_pct"].fillna(0.5))
+    total_priv_l3  = df["level3_hospitals"] * df["private_ownership_pct"].fillna(0.5)
 
-    supply_med  = df["weighted_score_per10k"].median()
-    poverty_med = df["poverty_incidence_2023_pct"].fillna(
-                    df["poverty_incidence_2021_pct"]).median()
+    df["effective_public_beds_per1000"] = (
+        total_gov_beds / pop * 1_000
+    ).round(4)
+
+    df["market_exclusion_index"] = (
+        total_priv_l3 / (total_gov_beds / 100 + 1)
+    ).round(4)
+
+    # ── PRIMARY TARGET: accessibility_gap_score ───────────────────────────
+    # Three components that are causally driven by the feature set:
+    pov_frac  = df["poverty_incidence_2023_pct"].fillna(
+                    df["poverty_incidence_2021_pct"].fillna(2.0)) / 100.0
+    pov_frac  = pov_frac.clip(0, 1)
+
+    max_dist  = df["nearest_public_tertiary_km"].max()
+    dist_norm = (df["nearest_public_tertiary_km"] / max_dist).clip(0, 1)
+
+    priv_pct  = df["private_ownership_pct"].fillna(0.5)
+    # public L3 share: what fraction of L3 hospitals are government-run
+    pub_l3    = df["level3_hospitals"] * (1 - priv_pct)
+    pub_l3_share = (pub_l3 / (df["level3_hospitals"].replace(0, np.nan))).fillna(0).clip(0, 1)
+
+    # Component A: poverty amplifies geographic distance
+    comp_a = pov_frac * dist_norm
+
+    # Component B: private dominance blocks access regardless of distance
+    comp_b = priv_pct * (1 - pub_l3_share)
+
+    # Component C: L3 desert — zero L3 of any kind
+    comp_c = (df["level3_hospitals"] == 0).astype(float)
+
+    df["accessibility_gap_score"] = (
+        0.40 * comp_a + 0.40 * comp_b + 0.20 * comp_c
+    ).round(4)
+
+    # ── Vulnerability Label (composite classification target) ─────────────
+    supply_med   = df["weighted_score_per10k"].median()
+    poverty_med  = df["poverty_incidence_2023_pct"].fillna(
+                       df["poverty_incidence_2021_pct"]).median()
     distance_med = df["nearest_public_tertiary_km"].median()
 
     def label_vulnerability(row):
-        low_supply   = (row["weighted_score_per10k"]   or 0) < supply_med
-        high_poverty = (row.get("poverty_incidence_2023_pct") or
-                        row.get("poverty_incidence_2021_pct") or 0) > poverty_med
-        far_tertiary = (row["nearest_public_tertiary_km"] or 0) > distance_med
+        low_supply    = (row["weighted_score_per10k"]   or 0) < supply_med
+        high_poverty  = (row.get("poverty_incidence_2023_pct") or
+                         row.get("poverty_incidence_2021_pct") or 0) > poverty_med
+        far_tertiary  = (row["nearest_public_tertiary_km"] or 0) > distance_med
         priv_dominant = (row["private_ownership_pct"] or 0) > 0.7
-
         score = sum([low_supply, high_poverty, far_tertiary, priv_dominant])
         if score >= 3:   return "High"
         elif score >= 2: return "Medium"
@@ -964,18 +1010,23 @@ def merge_all(city_facility_stats, population_df, poverty_df):
         "poverty_incidence_2023_pct", "poverty_threshold_2023_php",
         "pop_growth_rate_pct",
         "nearest_public_tertiary_km",
+        "accessibility_gap_score",
+        "effective_public_beds_per1000",
+        "market_exclusion_index",
         "vulnerability_label"
     ]
-    pd.set_option("display.max_columns", 20)
-    pd.set_option("display.width", 200)
+    pd.set_option("display.max_columns", 22)
+    pd.set_option("display.width", 220)
     pd.set_option("display.float_format", "{:.3f}".format)
     print(df[[c for c in display_cols if c in df.columns]].to_string(index=False))
 
     print("\n  Vulnerability label distribution:")
     print(df["vulnerability_label"].value_counts().to_string())
 
-    print("\n  Target variable (nearest_public_tertiary_km) stats:")
-    print(df["nearest_public_tertiary_km"].describe().round(3).to_string())
+    for tgt in ["accessibility_gap_score", "effective_public_beds_per1000",
+                "market_exclusion_index", "nearest_public_tertiary_km"]:
+        print(f"\n  {tgt} stats:")
+        print(df[tgt].describe().round(3).to_string())
 
     df.to_csv(os.path.join(DATA_DIR_OUT, OUT_MERGED), index=False)
     print(f"\n  Saved full feature matrix → {OUT_MERGED}")
@@ -987,12 +1038,12 @@ def merge_all(city_facility_stats, population_df, poverty_df):
 if __name__ == "__main__":
     print("=" * 70)
     print("HEALTHCARE ACCESSIBILITY INDEX — SCRIPT 01: DATA CLEANING")
-    print("Target: Effective Service Radius (nearest_public_tertiary_km)")
+    print("Primary Target : accessibility_gap_score (composite, predictable)")
+    print("Reference Only : nearest_public_tertiary_km (geometric constant)")
     print("=" * 70)
 
     os.makedirs(DATA_DIR_OUT, exist_ok=True)
 
-    # Check all files exist before starting
     missing = [
         f for f in [NHFR_FILE, POPULATION_FILE, POVERTY_FILE]
         if not os.path.exists(os.path.join(DATA_DIR, f))
