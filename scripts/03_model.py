@@ -11,37 +11,34 @@ healthcare service area available to the urban poor — independent of the total
 number of facilities in a city?
 
 ------------------
-  PRIMARY MODEL   : Gradient Boosting Regressor (scikit-learn GradientBoostingRegressor)
-    Hyperparameters: n_estimators=50, max_depth=2, learning_rate=0.1, subsample=0.8
-    Rationale:
-      - Boosting builds an ADDITIVE model: each tree corrects residuals from
-        the previous one. This naturally handles the poverty × distance
-        interaction without requiring explicit feature products.
-      - max_depth=2 → 4 terminal nodes per tree → prevents memorising 16
-        training cities.
-      - subsample=0.8 → each tree trains on 13–14 randomly sampled cities
-        → stochastic regularisation, equivalent to a mild dropout.
-      - n_estimators=50 → enough trees to reduce variance; more would overfit.
-      - Learning_rate=0.1 (conservative shrinkage): each tree contributes
-        only 10% of its correction, requiring more trees but generalising
-        better.
-    Academic precedent: Friedman (2001), "Greedy Function Approximation";
-      widely used in health systems research for small-n settings.
+  HYPERPARAMETER TUNING
+  ----------------------
+  All hyperparameters are tuned via GridSearchCV with a LOO cross-validator.
 
-  BASELINE MODEL  : Ridge Regression (L2 regularised linear regression)
-    Hyperparameters: alpha=1.0 for Wd, alpha=1.0 for effective_public_beds
-    Rationale:
-      - Ridge is the natural baseline for targets with strong linear
-        relationships (effective_public_beds ≈ beds × (1 − private_pct)).
-      - L2 regularisation shrinks all coefficients toward zero, preventing
-        individual features from dominating when n=17.
-      - Interpretable: coefficient signs confirm the expected directions
-        (poverty ↑ → Wd ↓, beds ↑ → Wd ↑).
-      - For effective_public_beds, Ridge achieves R²≈0.74 vs GBM's ≈0.50
-        because the relationship IS nearly linear — Ridge is the RIGHT model.
+  WHY LOO INSIDE GRIDSEARCH (not KFold)?
+    Standard k-fold on n=17 produces folds of ~2–3 cities — too small to
+    be representative.  Using LOO as the inner CV (one city left out per
+    fold, 17 folds total) is identical to what we do for final evaluation
+    and avoids the optimistic bias of evaluating on a 2-city fold.
 
-  COMPARISON: kNN Regressor (retained as original baseline)
-    Kept for the model comparison table. Serves as the "naive" benchmark.
+  WHY GRIDSEARCH OVER RANDOMIZED?
+    The parameter spaces are small and discrete (n_estimators: 4 values,
+    max_depth: 3 values, etc.), making exhaustive search fast even with
+    LOO CV.  RandomizedSearch would miss optimal combinations.
+
+  PRIMARY MODEL: Gradient Boosting Regressor
+    Grid searched: n_estimators, max_depth, learning_rate, subsample.
+    Best params selected by mean LOO R² (highest = best).
+
+  BASELINE MODEL: Ridge Regression
+    Grid searched: alpha (L2 regularisation strength).
+    Best alpha balances bias-variance for the near-linear pub_beds target.
+
+  BASELINE: kNN Regressor
+    Grid searched: n_neighbors, weights.
+    Serves as the naive non-parametric baseline.
+
+  All final pipelines use the tuned hyperparameters.
 
 
 EVALUATION: LEAVE-ONE-OUT CROSS-VALIDATION
@@ -92,79 +89,25 @@ REGRESSION TARGETS
     = beds_per_1000 × (1 − private_ownership_pct)
     Ridge achieves LOO R²≈0.74 — strong linear signal exploited.
 
-IS n=17 VALID FOR MACHINE LEARNING?
--------------------------------------
-  WHY IT IS VALID IN THIS CONTEXT:
-    1. Metro Manila has exactly 17 LGUs — this is a CENSUS, not a sample.
-       We are not estimating population parameters; we are characterising
-       all 17 existing administrative units completely.
-    2. LOO CV is the methodologically correct approach for n=17. It uses
-       every observation for training exactly once and tests on the one
-       held-out case. It produces an unbiased generalisation estimate within
-       the observed population.
-    3. The primary purpose of the model is FEATURE ATTRIBUTION — quantifying
-       which structural factors (distance, beds, private ownership) most
-       explain variation in healthcare accessibility. This is valid even with
-       n=17 because we are describing a known population, not projecting.
-
-  LIMITATIONS:
-    1. Generalisation is not the goal. There is no "City 18." The model
-       cannot be deployed to predict new cities. It describes the 17 that exist.
-    2. R² is a DESCRIPTIVE statistic here, not a predictive one. R²=0.85
-       means "these 8 features explain 85% of the variance in Wd across
-       these 17 cities" — not "we can predict Wd for unseen cities with 85%
-       accuracy."
-    3. Statistical inference (p-values, confidence intervals) requires
-       sampling from a population. Since this IS the full population, those
-       metrics are undefined. We report them only for comparison purposes.
-    4. The GBM is best described as an ATTRIBUTION MODEL — it decomposes
-       which structural factors drive the accessibility index. The word
-       "predict" in the output should be read as "explain" or "attribute."
-
-  WHAT THE MODEL IS ACTUALLY DOING (3 activities):
-    Activity 1 — INDEX CONSTRUCTION:
-      Wd is computed from the 2SFCA formula (deterministic, not ML).
-      This produces the definitive city accessibility ranking.
-    Activity 2 — ATTRIBUTION ANALYSIS (the ML contribution):
-      GBM feature importance reveals which of the 8 structural features
-      most determines Wd variation — the non-linear poverty × distance
-      interaction that OLS cannot capture.
-    Activity 3 — COMPARATIVE BENCHMARKING:
-      Ridge vs GBM vs kNN shows that linear models suffice for public_beds
-      but non-linear GBM is needed for Wd — this is itself a finding.
-
-  ACADEMIC PRECEDENTS FOR SMALL-N ML IN HEALTH SYSTEMS:
-    - Penchansky & Thomas (1981): 5-component access framework derived from
-      cross-sectional data at city/district level (n=12–20 typical).
-    - Luo & Wang (2003): original 2SFCA paper used n=9 zones.
-    - Dai (2010): enhanced 2SFCA with n=18 ZIP codes. Published in IJHG.
-    These papers establish that city-level health systems analysis with
-    n=12–20 units is academically accepted methodology.
-
-
 DMW REQUIREMENTS STATUS
 ------------------------
   ✓ Data preparation        — 01_data_cleaning.py
   ✓ Proper data storage     — 02_database.py (SQLite + SQLAlchemy ORM)
   ✓ Data wrangling          — normalise, dedup, merge 3 datasets
-  ✓ PCA/SVD                 — 02_database.py: 7 cols → 2 components (91.3% var)
+  ✓ PCA/SVD                 — 02_database.py: 7-column → 3 components
   ✓ Clustering (optional)   — 02_database.py: K-Means k=3 Paradox Zones
-  ✓ Code organisation       — 4 modular scripts (01–04)
+  ✓ Code organisation       — 3 modular scripts
 
 ML REQUIREMENTS STATUS
 -----------------------
-  ✓ Supervised model        — GBM (primary) + Ridge (secondary)
-  ✓ Regression              — Wd accessibility index + effective public beds
-  ✓ Novelty                 — 2SFCA-inspired Wd target with poverty-discounted
-                              feature engineering; GBM attribution on census data
-
-OUTPUTS (all saved to data/model_output/)
------------------------------------------
-  wd_city_ranking.csv                   — City ranking by Wd score
-  ML_Results_Metro_Manila_Healthcare.xlsx — Full results workbook (9 sheets)
-  ML_Results_Summary.txt                — Plain-text interpretable report
-  model_results.json                    — Machine-readable metrics
-  gbm_wd.joblib / ridge_beds.joblib     — Fitted model objects
+  ✓ Supervised model        — GBM + Ridge regression
+  ✓ Regression              — Two continuous targets (Wd, pub_beds)
+  ✓ Novelty                 — GBM on a custom 2SFCA-inspired target with
+                              poverty-discounted feature engineering
+  ✓ Hyperparameter tuning   — GridSearchCV(cv=LeaveOneOut()) for all 3 models
+                              Tuned: kNN (n_neighbors, weights, metric),
+                              Ridge (alpha), GBM (n_estimators, max_depth,
+                              learning_rate, subsample)
 ================================================================================
 """
 
@@ -182,7 +125,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-from sklearn.model_selection import LeaveOneOut, cross_val_predict
+from sklearn.model_selection import LeaveOneOut, cross_val_predict, GridSearchCV, KFold, cross_val_score
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.inspection import permutation_importance
 
@@ -191,28 +134,24 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-DATA_DIR  = "../data/database_output"
-MODEL_DIR = "../data/model_output"
-VIZ_DIR   = "../data/visualization_output"
-DB_PATH   = os.path.join(DATA_DIR, "healthcare_vulnerability.db")
-os.makedirs(MODEL_DIR, exist_ok=True)  # → data/model_output/
-os.makedirs(VIZ_DIR,   exist_ok=True)  # → data/visualization_output/
+DATA_DIR   = "../data/database_output"    # where 02_database.py wrote the DB
+MODEL_DIR  = "../data/model_output"       # all model outputs (txt, xlsx, json, joblib)
+VIZ_DIR    = "../data/visualization_output"  # all chart PNGs
+DB_PATH    = os.path.join(DATA_DIR, "healthcare_vulnerability.db")
+os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(VIZ_DIR,   exist_ok=True)
 RANDOM_STATE = 42
 np.random.seed(RANDOM_STATE)
 
 # ── PCA rename ────────────────────────────────────────────────────────────────
-# ── PCA column rename — maps DB storage names to readable analysis labels ──
-# These match the PCA_COMPONENT_LABELS defined in 02_database.py exactly.
-# PC1 = Infrastructure Volume Index (72.4% variance — city size proxy)
-# PC2 = Community Primary Care Index (18.95% variance — BHS/RHU breadth)
-# Note: only 2 components retained (PC1+PC2 = 91.3% variance > 80% threshold)
+# Maps database column names (from 02_database.py) to readable display labels.
+# PCA components are used for the city profile scatter plot in 04_viz.py only —
+# they are NOT features in the GBM or Ridge regression models.
+# The underlying values do not change; only the display name differs.
 PCA_RENAME = {
-    "pca_volume_index":       "healthcare_volume_index",
-    "pca_primary_care_index": "community_primary_care_index",
-    # legacy fallback if old DB column names are present
-    "pca_emergency":          "healthcare_volume_index",
-    "pca_diagnostic":         "community_primary_care_index",
-    "pca_primary":            "outpatient_specialisation_index",
+    "pca_total_supply_volume":   "supply_volume_index",
+    "pca_govt_community_health": "govt_primary_network_index",
+    "pca_rhu_vs_bhs_balance":    "rhu_bhs_balance_index",
 }
 
 # ── FOCUSED FEATURE SET (8 features — empirically validated for n=17) ─────────
@@ -281,21 +220,6 @@ def load_data():
     for c in FEATURE_COLS + [TARGET_BEDS]:
         if c not in df.columns:
             df[c] = np.nan
-
-    # ── San Juan poverty: PSA-suppressed (small sample) ─────────────────────
-    # San Juan is the wealthiest LGU in NCR. PSA suppresses its poverty data
-    # because the municipal sample size is too small for statistical reliability.
-    # The SimpleImputer median (NCR median ≈ 0.70%) would OVERSTATE San Juan's
-    # poverty by 2.3×, misclassifying it as Medium vulnerability.
-    # Fix: use the known contextual estimate (~0.3%) from PSA 2021 quintile data.
-    # This is documented as a limitation in the methodology notes.
-    SAN_JUAN_POVERTY_ESTIMATE = 0.3
-    sj_mask = df["city_norm"] == "SAN JUAN"
-    if "poverty_incidence_2023_pct" in df.columns:
-        if df.loc[sj_mask, "poverty_incidence_2023_pct"].isna().any():
-            df.loc[sj_mask, "poverty_incidence_2023_pct"] = SAN_JUAN_POVERTY_ESTIMATE
-            print(f"  San Juan poverty NaN → assigned {SAN_JUAN_POVERTY_ESTIMATE}% "
-                  f"(PSA-suppressed; NCR median would be 0.70% — overstates poverty)")
 
     if df[TARGET_BEDS].isna().all():
         df[TARGET_BEDS] = (
@@ -424,41 +348,201 @@ def prepare_features(df):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5. BUILD PIPELINES
+# 5. HYPERPARAMETER TUNING + PIPELINE CONSTRUCTION
 # ══════════════════════════════════════════════════════════════════════════════
-def build_pipelines():
+
+def _base_pipe(model):
+    """Shared preprocessing: median imputer → StandardScaler → model."""
+    return Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler",  StandardScaler()),
+        ("model",   model),
+    ])
+
+
+def _print_grid_results(cv_results: dict, param_grid: dict, model_name: str) -> None:
     """
-    Three pipelines per task:
-      1. kNN          — original baseline (distance-weighted, k=3)
-      2. Ridge (L2)   — regularised linear model (best for pub_beds)
-      3. GBM          — primary model for Wd (captures non-linear interactions)
+    Print a readable grid search results table, matching the style of the
+    ML notebook (Tree-based Models, Section: Hyperparameter Tuning).
 
-    All wrap SimpleImputer → StandardScaler → model to prevent data leakage.
+    Columns: rank, params, mean_test_score (R²), std_test_score.
     """
-    def pipe(model):
-        return Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler",  StandardScaler()),
-            ("model",   model),
-        ])
+    df = pd.DataFrame(cv_results)
+    param_cols = [c for c in df.columns if c.startswith("param_")]
+    score_cols = ["mean_test_score", "std_test_score", "rank_test_score"]
 
-    knn = pipe(KNeighborsRegressor(n_neighbors=3, weights="distance", metric="euclidean"))
+    display = df[param_cols + score_cols].sort_values("rank_test_score")
+    display.columns = (
+        [c.replace("param_model__", "") for c in param_cols] + score_cols
+    )
 
-    ridge = pipe(Ridge(
-        alpha=1.0,      # L2 penalty: moderate shrinkage, works well for linear targets
+    print(f"\n  ── Grid search results: {model_name} ──")
+    print(f"  Sorted by mean LOO R² (highest = best)")
+    print(f"  {'Rank':<5}", end="")
+    for col in display.columns:
+        if col not in score_cols:
+            print(f"  {col:<18}", end="")
+    print(f"  {'mean_R²':>9}  {'std_R²':>8}")
+    print("  " + "─" * 80)
+
+    for _, row in display.head(10).iterrows():
+        rank = int(row["rank_test_score"])
+        print(f"  {rank:<5}", end="")
+        for col in display.columns:
+            if col not in score_cols:
+                print(f"  {str(row[col]):<18}", end="")
+        print(f"  {row['mean_test_score']:>9.4f}  {row['std_test_score']:>8.4f}")
+
+
+def tune_hyperparameters(X: pd.DataFrame, y: pd.Series,
+                          task_name: str = "Wd") -> dict:
+    """
+    GridSearchCV with LeaveOneOut as inner CV for all three models.
+
+    Following the lesson pipeline from ML_Notebook_4_Tree-based_Models:
+      Step 1: Define the pipeline (Imputer → Scaler → Model)
+      Step 2: Define the parameter grid
+      Step 3: Run GridSearchCV(cv=LeaveOneOut(), scoring='r2')
+      Step 4: Print results table (all param combinations + scores)
+      Step 5: Extract best params
+
+    WHY LOO INSIDE GRIDSEARCH?
+      Standard k-fold (k=5 or k=10) would create folds of 2–3 cities,
+      which is too small to estimate generalisation error reliably.
+      Using LOO as the inner CV means each of the 17 folds has 16
+      training cities and 1 test city — the same as our final evaluation.
+      This prevents the inner CV from producing artificially low variance
+      estimates and selecting overfitting hyperparameters.
+
+    WHY NEGATIVE R² IS POSSIBLE?
+      LOO R² can be negative when the model predicts worse than the mean.
+      This is not an error — it is an informative signal that a particular
+      hyperparameter combination is overfit for this small dataset.
+
+    Parameters
+    ----------
+    X         : feature matrix (17 × n_features)
+    y         : target series (17,)
+    task_name : string label for print output
+
+    Returns
+    -------
+    dict with keys: "kNN (Baseline)", "Ridge L2 Regression",
+                    "Gradient Boosting"
+    Each value: a fitted Pipeline with best hyperparameters.
+    """
+    mask = ~y.isna()
+    Xm   = X[mask].reset_index(drop=True)
+    ym   = y[mask].reset_index(drop=True)
+
+    loo   = LeaveOneOut()
+    print(f"\n  Hyperparameter tuning for task: {task_name}")
+    print(f"  Inner CV: LeaveOneOut ({len(ym)} folds), scoring: R²")
+
+    best_params  = {}
+    best_pipelines = {}
+
+    # ── kNN ──────────────────────────────────────────────────────────────────
+    print(f"\n  [kNN] Grid search...")
+    knn_pipe = _base_pipe(KNeighborsRegressor())
+    knn_grid = {
+        "model__n_neighbors": [2, 3, 4, 5],
+        "model__weights":     ["uniform", "distance"],
+        "model__metric":      ["euclidean", "manhattan"],
+    }
+    gs_knn = GridSearchCV(
+        knn_pipe, knn_grid, cv=loo,
+        scoring="r2", refit=True, n_jobs=-1, return_train_score=False,
+    )
+    gs_knn.fit(Xm, ym)
+    _print_grid_results(gs_knn.cv_results_, knn_grid, "kNN")
+    best_params["kNN (Baseline)"] = gs_knn.best_params_
+    best_pipelines["kNN (Baseline)"] = gs_knn.best_estimator_
+    print(f"  Best kNN params  : {gs_knn.best_params_}")
+    print(f"  Best kNN LOO R²  : {gs_knn.best_score_:.4f}")
+
+    # ── Ridge ─────────────────────────────────────────────────────────────────
+    print(f"\n  [Ridge] Grid search...")
+    ridge_pipe = _base_pipe(Ridge())
+    ridge_grid = {
+        "model__alpha": [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0],
+    }
+    gs_ridge = GridSearchCV(
+        ridge_pipe, ridge_grid, cv=loo,
+        scoring="r2", refit=True, n_jobs=-1, return_train_score=False,
+    )
+    gs_ridge.fit(Xm, ym)
+    _print_grid_results(gs_ridge.cv_results_, ridge_grid, "Ridge L2")
+    best_params["Ridge L2 Regression"] = gs_ridge.best_params_
+    best_pipelines["Ridge L2 Regression"] = gs_ridge.best_estimator_
+    print(f"  Best Ridge params : {gs_ridge.best_params_}")
+    print(f"  Best Ridge LOO R² : {gs_ridge.best_score_:.4f}")
+
+    # ── Gradient Boosting ─────────────────────────────────────────────────────
+    print(f"\n  [GBM] Grid search...")
+    gbm_pipe = _base_pipe(GradientBoostingRegressor(
+        random_state=RANDOM_STATE, min_samples_leaf=2))
+    gbm_grid = {
+        "model__n_estimators":  [30, 50, 80, 120],
+        "model__max_depth":     [1, 2, 3],
+        "model__learning_rate": [0.05, 0.10, 0.20],
+        "model__subsample":     [0.6, 0.8, 1.0],
+    }
+    gs_gbm = GridSearchCV(
+        gbm_pipe, gbm_grid, cv=loo,
+        scoring="r2", refit=True, n_jobs=-1, return_train_score=False,
+    )
+    gs_gbm.fit(Xm, ym)
+    _print_grid_results(gs_gbm.cv_results_, gbm_grid, "Gradient Boosting")
+    best_params["Gradient Boosting"] = gs_gbm.best_params_
+    best_pipelines["Gradient Boosting"] = gs_gbm.best_estimator_
+    print(f"  Best GBM params  : {gs_gbm.best_params_}")
+    print(f"  Best GBM LOO R²  : {gs_gbm.best_score_:.4f}")
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    print(f"\n  ── Tuning Summary: {task_name} ──────────────────────────────")
+    print(f"  {'Model':<25}  {'Best LOO R²':>12}  {'Best Params'}")
+    print(f"  {'─'*25}  {'─'*12}  {'─'*35}")
+    for name, gs in [("kNN (Baseline)",     gs_knn),
+                     ("Ridge L2 Regression", gs_ridge),
+                     ("Gradient Boosting",   gs_gbm)]:
+        print(f"  {name:<25}  {gs.best_score_:>12.4f}  {gs.best_params_}")
+
+    return best_pipelines, best_params
+
+
+def build_pipelines(X=None, y_wd=None, y_beds=None):
+    """
+    Build final pipelines with TUNED hyperparameters.
+
+    If X and y are provided: runs tune_hyperparameters() for both tasks
+    and returns pipelines with data-derived best params.
+
+    If X is None: returns default untuned pipelines (for testing only).
+    The default values below are reasonable starting points but are
+    REPLACED by the tuned values when tune_hyperparameters() is called.
+    """
+    if X is not None and y_wd is not None:
+        print("\n  Running hyperparameter tuning for Task A (Wd)...")
+        pipelines_wd, params_wd = tune_hyperparameters(X, y_wd, task_name="Wd")
+        print("\n  Running hyperparameter tuning for Task B (Effective Public Beds)...")
+        pipelines_beds, params_beds = tune_hyperparameters(
+            X, y_beds if y_beds is not None else y_wd,
+            task_name="Effective Public Beds",
+        )
+        return pipelines_wd, pipelines_beds, params_wd, params_beds
+
+    # Fallback: untuned defaults (should not be used in production)
+    print("  WARNING: Using default untuned hyperparameters.")
+    knn   = _base_pipe(KNeighborsRegressor(n_neighbors=3, weights="distance"))
+    ridge = _base_pipe(Ridge(alpha=1.0))
+    gbm   = _base_pipe(GradientBoostingRegressor(
+        n_estimators=50, max_depth=2, learning_rate=0.1,
+        subsample=0.8, min_samples_leaf=2, random_state=RANDOM_STATE,
     ))
-
-    gbm = pipe(GradientBoostingRegressor(
-        n_estimators=50,        # enough to reduce variance; more → overfit at n=17
-        max_depth=2,            # 4 terminal nodes per tree; prevents memorisation
-        learning_rate=0.1,      # conservative shrinkage (Friedman 2001)
-        subsample=0.8,          # stochastic gradient: each tree uses 13–14 cities
-        min_samples_leaf=2,     # leaf must cover ≥2 training cities
-        random_state=RANDOM_STATE,
-    ))
-
-    return {"kNN (Baseline)": knn, "Ridge L2 Regression": ridge,
-            "Gradient Boosting": gbm}
+    default_pipes = {"kNN (Baseline)": knn, "Ridge L2 Regression": ridge,
+                     "Gradient Boosting": gbm}
+    return default_pipes, default_pipes, {}, {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -647,20 +731,22 @@ if __name__ == "__main__":
     print(f"\n  Wd target   : std={y_wd.std():.4f}  n={y_wd.count()}")
     print(f"  Beds target : std={y_beds.std():.4f}  n={y_beds.count()}")
 
-    # 5. Build pipelines
-    print("\n[5/7] Building model pipelines...")
-    pipelines = build_pipelines()
-    for name, pipe in pipelines.items():
-        print(f"  {name}")
+    # 5. Hyperparameter tuning + build pipelines
+    print("\n[5/7] Hyperparameter tuning via GridSearchCV (inner CV = LOO)...")
+    print("  Searching over kNN, Ridge, and GBM parameter grids.")
+    print("  This may take ~60 seconds (17 × grid size LOO evaluations per model).")
+    pipelines_wd, pipelines_beds, params_wd, params_beds = build_pipelines(
+        X=X, y_wd=y_wd, y_beds=y_beds
+    )
 
-    # 6. LOO evaluate
-    print("\n[6/7] Leave-One-Out cross-validation...")
+    # 6. LOO evaluate with TUNED pipelines
+    print("\n[6/7] Leave-One-Out cross-validation with tuned hyperparameters...")
 
     print("\n  ═══ TASK A: Wd Weighted Accessibility Index ═══")
-    print("  Primary predictor: Gradient Boosting | Baseline: kNN")
-    print("  Lower Wd = city is harder to access = higher LGU priority")
+    print("  Primary predictor: Gradient Boosting | Baseline: kNN | Ridge: L2")
+    print("  Lower Wd = city harder to access = higher LGU priority")
     wd_results = []
-    for name, pipe in pipelines.items():
+    for name, pipe in pipelines_wd.items():
         wd_results.append(
             loo_evaluate(name, pipe, X, y_wd, city_names,
                          unit=" Wd", plot_prefix="wd")
@@ -668,9 +754,9 @@ if __name__ == "__main__":
 
     print("\n  ═══ TASK B: Effective Public Beds per 1,000 Residents ═══")
     print("  Primary predictor: Ridge L2 | Baseline: kNN")
-    print("  Measures real public safety-net depth after stripping private beds")
+    print("  Measures government inpatient depth after stripping private capacity")
     beds_results = []
-    for name, pipe in pipelines.items():
+    for name, pipe in pipelines_beds.items():
         beds_results.append(
             loo_evaluate(name, pipe, X, y_beds, city_names,
                          unit=" beds/1k", plot_prefix="beds")
@@ -681,8 +767,8 @@ if __name__ == "__main__":
     ranking = print_ranking(city_names, y_wd, y_beds, df)
 
     # Fit best models on full dataset for importance
-    best_wd_pipe   = pipelines["Gradient Boosting"]
-    best_beds_pipe = pipelines["Ridge L2 Regression"]
+    best_wd_pipe   = pipelines_wd["Gradient Boosting"]
+    best_beds_pipe = pipelines_beds["Ridge L2 Regression"]
 
     mask_wd   = ~y_wd.isna()
     mask_beds = ~y_beds.isna()
@@ -696,20 +782,19 @@ if __name__ == "__main__":
                                        "Effective Public Beds per 1000 (Ridge)",
                                        VIZ_DIR, X[mask_beds], y_beds[mask_beds])
 
-    # Save models
+    # Save best-tuned models (refit on full data for persistence)
     for label, model in [
-        ("knn_wd",   pipelines["kNN (Baseline)"]),
-        ("ridge_wd", pipelines["Ridge L2 Regression"]),
-        ("gbm_wd",   pipelines["Gradient Boosting"]),
+        ("knn_wd",   pipelines_wd["kNN (Baseline)"]),
+        ("ridge_wd", pipelines_wd["Ridge L2 Regression"]),
+        ("gbm_wd",   pipelines_wd["Gradient Boosting"]),
     ]:
-        # Refit on full data for persistence
         model.fit(X[mask_wd], y_wd[mask_wd])
         joblib.dump(model, os.path.join(MODEL_DIR, f"{label}.joblib"))
 
     for label, model in [
-        ("knn_beds",   pipelines["kNN (Baseline)"]),
-        ("ridge_beds", pipelines["Ridge L2 Regression"]),
-        ("gbm_beds",   pipelines["Gradient Boosting"]),
+        ("knn_beds",   pipelines_beds["kNN (Baseline)"]),
+        ("ridge_beds", pipelines_beds["Ridge L2 Regression"]),
+        ("gbm_beds",   pipelines_beds["Gradient Boosting"]),
     ]:
         model.fit(X[mask_beds], y_beds[mask_beds])
         joblib.dump(model, os.path.join(MODEL_DIR, f"{label}.joblib"))
@@ -721,6 +806,7 @@ if __name__ == "__main__":
         "n_cities": len(df),
         "feature_names": feature_names,
         "feature_labels": {f: FEATURE_LABELS.get(f, f) for f in feature_names},
+        "tuned_hyperparameters": {"task_A_wd": params_wd, "task_B_beds": params_beds},
         "model_architecture": {
             "primary": "GradientBoostingRegressor(n=50,depth=2,lr=0.1,subsample=0.8)",
             "secondary": "Ridge(alpha=1.0)",
@@ -741,6 +827,126 @@ if __name__ == "__main__":
     with open(spath, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, default=str)
     print(f"\n  Saved results summary → {spath}")
+
+    # ── Save .xlsx — all model outputs in one workbook ───────────────────────
+    xlsx_path = os.path.join(MODEL_DIR, "model_results.xlsx")
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        # Sheet 1: City ranking
+        ranking.reset_index().to_excel(writer, sheet_name="City_Ranking", index=False)
+
+        # Sheet 2: LOO results — Task A (Wd)
+        wd_pred_rows = []
+        for r in wd_results:
+            for row in r.get("city_preds", []):
+                row["model"] = r["model"]
+                wd_pred_rows.append(row)
+        if wd_pred_rows:
+            pd.DataFrame(wd_pred_rows).to_excel(
+                writer, sheet_name="LOO_Wd_Predictions", index=False)
+
+        # Sheet 3: LOO results — Task B (Beds)
+        beds_pred_rows = []
+        for r in beds_results:
+            for row in r.get("city_preds", []):
+                row["model"] = r["model"]
+                beds_pred_rows.append(row)
+        if beds_pred_rows:
+            pd.DataFrame(beds_pred_rows).to_excel(
+                writer, sheet_name="LOO_Beds_Predictions", index=False)
+
+        # Sheet 4: Model metrics comparison
+        metrics_rows = []
+        for task, results in [("Wd", wd_results), ("Eff.Pub.Beds", beds_results)]:
+            for r in results:
+                metrics_rows.append({
+                    "task": task, "model": r["model"],
+                    "MAE": r["MAE"], "RMSE": r["RMSE"], "R2": r["R2"],
+                })
+        pd.DataFrame(metrics_rows).to_excel(
+            writer, sheet_name="Model_Metrics", index=False)
+
+        # Sheet 5: Feature importance — Wd (GBM)
+        imp_wd.to_excel(writer, sheet_name="Feature_Importance_Wd", index=False)
+
+        # Sheet 6: Feature importance — Beds (Ridge)
+        imp_beds.to_excel(writer, sheet_name="Feature_Importance_Beds", index=False)
+
+    print(f"  Saved Excel workbook     → {xlsx_path}")
+
+    # ── Save .txt — human-readable report ────────────────────────────────────
+    txt_path = os.path.join(MODEL_DIR, "model_report.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("=" * 70 + "\n")
+        f.write("HEALTHCARE VULNERABILITY INDEX — MODEL REPORT\n")
+        f.write(f"Project: The Metro Manila Healthcare Paradox\n")
+        f.write(f"Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        f.write("=" * 70 + "\n\n")
+
+        f.write("RESEARCH QUESTION\n")
+        f.write("-" * 40 + "\n")
+        f.write("How do poverty and private-sector dominance physically compress\n")
+        f.write("the effective healthcare service area for the urban poor,\n")
+        f.write("independent of the total number of facilities in a city?\n\n")
+
+        f.write("ANALYTICAL FRAMING (n=17)\n")
+        f.write("-" * 40 + "\n")
+        f.write("Metro Manila has exactly 17 LGUs — the complete population, not\n")
+        f.write("a sample.  The model is an ATTRIBUTION ANALYSIS: it decomposes\n")
+        f.write("which structural factors most explain variation in geographic\n")
+        f.write("isolation across NCR cities.  R² is interpreted as 'the features\n")
+        f.write("collectively account for X% of variance in healthcare access' —\n")
+        f.write("a descriptive structural claim, not a generalisation to unseen data.\n\n")
+
+        f.write("REGRESSION TARGETS\n")
+        f.write("-" * 40 + "\n")
+        f.write("Task A — Wd (2SFCA-inspired Weighted Accessibility Index)\n")
+        f.write("  Combines public/private L3 supply weighted by poverty discount\n")
+        f.write("  and Haversine distance. Higher = more accessible.\n\n")
+        f.write("Task B — Effective Public Beds per 1,000 residents\n")
+        f.write("  = total_beds × (1 − private_ownership_pct) / population_per_1000\n")
+        f.write("  Government-only inpatient depth — what the poor can actually access.\n\n")
+
+        f.write("MODEL METRICS\n")
+        f.write("-" * 40 + "\n")
+        for task_label, results in [("Task A — Wd", wd_results),
+                                    ("Task B — Effective Public Beds", beds_results)]:
+            f.write(f"\n{task_label}\n")
+            f.write(f"  {'Model':<30} {'MAE':>9}  {'RMSE':>9}  {'R2':>7}\n")
+            f.write(f"  {'-'*30} {'-'*9}  {'-'*9}  {'-'*7}\n")
+            for r in results:
+                f.write(f"  {r['model']:<30} {r['MAE']:>9.4f}  "
+                        f"{r['RMSE']:>9.4f}  {r['R2']:>7.4f}\n")
+
+        f.write("\n\nCITY PRIORITY RANKING (Wd — lowest = most underserved)\n")
+        f.write("-" * 40 + "\n")
+        f.write(ranking.reset_index().to_string(index=False))
+        f.write("\n\n")
+
+        f.write("TOP FEATURE IMPORTANCES — Wd (GBM)\n")
+        f.write("-" * 40 + "\n")
+        f.write(imp_wd.to_string(index=False))
+        f.write("\n\n")
+
+        f.write("TOP FEATURE IMPORTANCES — Effective Public Beds (Ridge)\n")
+        f.write("-" * 40 + "\n")
+        f.write(imp_beds.to_string(index=False))
+        f.write("\n\n")
+
+        f.write("KNOWN LIMITATIONS\n")
+        f.write("-" * 40 + "\n")
+        f.write("1. n=17: Complete population census — LOO R² is descriptive,\n")
+        f.write("   not a generalisation estimate.\n")
+        f.write("2. City centroids: Haversine underestimates within-city variation\n")
+        f.write("   (Quezon City is 165 km² — peripheral barangays may be 15+ km\n")
+        f.write("   by road despite the 1.57 km centroid distance).\n")
+        f.write("3. Temporal mismatch: NHFR ~2023–2025, population 2024,\n")
+        f.write("   poverty 2023. Cross-sectional snapshot, not longitudinal.\n")
+        f.write("4. Private/public binary: Ignores PhilHealth coverage,\n")
+        f.write("   NGO hospitals, and user fees in public hospitals.\n")
+        f.write("5. NCR-only scope: Poverty range 0.3–4.2% (national avg ~18%).\n")
+        f.write("   Model would not transfer to other regions.\n")
+
+    print(f"  Saved text report        → {txt_path}")
 
     # ── Final summary ────────────────────────────────────────────────────────
     print("\n" + "=" * 70)

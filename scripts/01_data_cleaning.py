@@ -11,24 +11,104 @@ RESEARCH QUESTION
 effective service area available to the urban poor — independent of the total
 number of healthcare facilities in a city?"
 
-TARGET VARIABLE (Regression)
------------------------------
-  nearest_public_tertiary_km
-    Great-circle distance (km) from each city's geographic centroid to the
-    nearest GOVERNMENT-OWNED Level 3 (tertiary) hospital.
+WHAT THIS SCRIPT DOES
+---------------------
+  1. Loads three raw datasets (NHFR facilities, PSA census, PSA poverty)
+  2. Normalises city names across all three sources (17 NCR LGUs)
+  3. Engineers supply, barrier, and demand features
+  4. Computes the ML regression target: nearest_public_tertiary_km
+  5. Computes descriptive indices (accessibility_gap_score, effective_public_beds)
+     for ranking and visualisation — these are NOT used as ML prediction targets
+  6. Assigns a composite vulnerability label (Low/Medium/High) for classification
 
-    Rationale for this target:
-      - It is a geospatial, objective, and continuous outcome — suitable for
-        both regression (predict the radius) and classification (bin into
-        Low / Medium / High inaccessibility zones).
-      - Crucially, it is NOT derived from poverty — so poverty can serve as a
-        pure independent predictor, measuring how economic barriers compound
-        geographic barriers.
-      - A city may have 20 hospitals but if all are private (requiring PhilHealth
-        or out-of-pocket payment), the effective service radius for the poor
-        approaches the distance to the nearest public facility, not zero.
-      - Source: Coordinates of 19 known DOH-registered public tertiary hospitals
-        in NCR, manually verified against DOH NHFR facility codes.
+REGRESSION TARGET — nearest_public_tertiary_km
+----------------------------------------------
+  Great-circle distance (km) from each city's geographic centroid to the
+  nearest GOVERNMENT-OWNED Level 3 (tertiary) hospital, from the verified
+  list of 19 public tertiary hospitals in NCR.
+
+  Why this is the correct ML target:
+    The model in 03_model.py uses ONLY socioeconomic and supply features
+    (poverty incidence, private ownership ratio, bed density, facility
+    density, population growth) to predict how geographically isolated a
+    city's population is from public tertiary care.  None of these features
+    enter the Haversine formula — there is zero data leakage.
+
+    The model answers: "Given what we know about a city's economic profile
+    and healthcare supply mix, how far must its residents travel to reach
+    a public tertiary hospital?"  This makes the geographic barrier a
+    LEARNED outcome of structural conditions, not a fixed constant.
+
+  Why we do NOT predict accessibility_gap_score:
+    That index is a weighted formula of poverty × distance + private_pct.
+    Three of its four inputs are also model features.  Training a model to
+    predict it would recover the formula we already wrote (algebra, not
+    learning).  See the accessibility_gap_score documentation below.
+
+DESCRIPTIVE INDICES (for ranking/visualisation only)
+----------------------------------------------------
+  accessibility_gap_score [0–1, higher = worse]:
+    A composite ranking index for the priority matrix visualisation.
+    NOT used as an ML target. See merge_all() docstring for formula.
+
+  effective_public_beds_per1000:
+    Government-owned inpatient capacity per 1,000 residents.
+    IS used as a secondary ML regression target in 03_model.py because
+    it is NOT a formula of the model features.
+
+ON SAMPLE SIZE (n=17) — ATTRIBUTION ANALYSIS, NOT PREDICTION
+-------------------------------------------------------------
+  Metro Manila has exactly 17 LGUs — this is the complete population, not
+  a sample.  The ML model is therefore an ATTRIBUTION ANALYSIS, not a
+  predictive one in the traditional generalisation sense.
+
+  What the model does:
+    Decomposes WHICH structural factors (poverty, ownership, supply density)
+    most explain variation in geographic isolation across NCR cities.
+    Feature importance from the model is the primary analytical output.
+
+  What the model cannot do:
+    Generalise to cities outside NCR (different poverty range, supply mix).
+    Produce confidence intervals with inferential meaning (no population
+    sampling — these 17 LGUs ARE the population).
+
+  Why LOO cross-validation is still used:
+    Leave-one-out CV estimates how well the model characterises each city
+    given the other 16.  R² in this context means "the features collectively
+    account for X% of the variance in geographic isolation across NCR cities"
+    — a valid descriptive claim about the structural relationships.
+
+TEMPORAL MISALIGNMENT (cross-dataset limitation)
+------------------------------------------------
+  The three source datasets do not share a common reference year:
+
+    Dataset                              Reference period
+    ─────────────────────────────────────────────────────
+    NHFR (healthcare_facilities.xlsx)    ~2023–2025 records
+    PSA Census (population)              2020 and 2024
+    PSA Poverty Incidence                2021 and 2023
+    ─────────────────────────────────────────────────────
+
+  Key implications:
+    - 2021 poverty data reflects COVID-19 economic peak (NCR poverty was
+      2.2% in 2021, up from 1.4% in 2018). Using it overstates economic
+      hardship relative to current conditions.  Primary barrier feature
+      uses 2023 poverty estimates to minimise this.
+    - Fast-growing cities (Taguig +6.9%, Mandaluyong +9.4% from 2020→2024)
+      appear more facility-dense with 2020 population denominators.
+      ALL per-capita density features use population_2024 to correct this.
+    - The result is a cross-sectional snapshot at approximately 2023–2024,
+      not a longitudinal analysis.
+
+  Disclosure statement (for project report):
+    "This analysis uses healthcare facility data reflecting approximately
+    2023–2025 licensing records, population data from the 2024 PSA census,
+    and poverty incidence estimates from 2023.  Because these datasets do
+    not share a common reference year, the resulting model is a cross-
+    sectional estimate of healthcare accessibility at approximately 2023–2024.
+    Temporal drift between sources is acknowledged as a limitation and
+    partially mitigated by using the most recent available estimate for
+    each variable."
 
 FEATURE DIMENSIONS
 ------------------
@@ -45,7 +125,7 @@ The model uses three "Dimensions of Inequity":
      │ level3_per100k                  │ Tertiary hospitals per 100,000 people  │
      │ private_ownership_pct           │ % of facilities that are private       │
      │ private_to_public_ratio         │ Private:Government facility ratio      │
-     │ public_primary_per10k           │ RHUs + BHS per 10,000 (gov primary)    │
+     │ public_primary_per10k           │ RHUs + BHS per 10,000 (gov primary)   │
      └─────────────────────────────────┴────────────────────────────────────────┘
 
   2. BARRIER FEATURES (the "How Much") — from poverty_incidence.xlsx
@@ -67,6 +147,15 @@ The model uses three "Dimensions of Inequity":
      │                                 │ future strain on stagnant supply       │
      └─────────────────────────────────┴────────────────────────────────────────┘
 
+     DENOMINATOR NOTE: All per-capita density features (facility_density_per10k,
+     beds_per_1000, weighted_score_per10k, etc.) use population_2024 as the
+     denominator, NOT population_2020.  Rationale: the NHFR facility data
+     reflects approximately 2023–2025 licensing records.  Using 2020 population
+     overstates density for fast-growing cities (Taguig +6.9%, Mandaluyong
+     +9.4%, Pasig +6.2% between 2020–2024) because it divides current facility
+     counts by a smaller-than-actual resident base.  population_2024 is the
+     closest available PSA estimate to the NHFR reference period and minimises
+     this systematic error.
 
 SERVICE LEVEL WEIGHTS — assign_service_level_weight()
 -----------------------------------------------------
@@ -107,7 +196,6 @@ following the DOH's own hospital licensing framework (A.O. 2012-0012):
   < 50 → primary), since the NHFR sometimes omits the capability field for
   older registrations.
 
-
 VULNERABILITY LABEL — label_vulnerability()
 -------------------------------------------
 The vulnerability_label (Low / Medium / High) is a derived CLASSIFICATION
@@ -128,48 +216,6 @@ target used alongside the continuous regression target.
   the Philippines' largest public hospital (PGH) 0.1 km away. The composite
   score captures the Correlation of Disconnect: a city is only truly
   inaccessible when supply, economics, AND geography all fail simultaneously.
-
-
-IMPORTANT NOTE ON accessibility_gap_score
-------------------------------------------
-  accessibility_gap_score is a COMPOSITE INDEX computed from a formula,
-  NOT a machine learning prediction target. It is included in the output
-  for reference and descriptive analysis only.
-
-  Formula (from Apparicio et al. 2008, adapted for NCR):
-    Component A (40%) = poverty_fraction × normalised_distance_to_L3
-      → Poverty AMPLIFIES the geographic barrier. A poor city that is also
-        far from a public L3 hospital suffers compounding inaccessibility.
-      → Basis: 2SFCA literature shows poverty mediates distance decay.
-
-    Component B (40%) = private_ownership_pct × (1 − public_L3_share)
-      → Private dominance BLOCKS access regardless of distance.
-        If 80% of a city's facilities are private and none of its L3
-        hospitals are government-run, the poor have no accessible
-        critical care even if facilities are nearby.
-      → Basis: WHO 2010 health systems framework (stewardship dimension).
-
-    Component C (20%) = 1 if city has zero L3 hospitals, else 0
-      → L3 desert penalty. Cities with no tertiary care at all face a
-        structural gap that cannot be compensated by primary facilities.
-      → Basis: DOH AO 2012-0012 classification — L3 is required for
-        ICU, NICU, surgical training, complex emergency care.
-
-  DESIGN RATIONALE (why these weights):
-    40/40/20 reflects the relative contribution of each barrier type to
-    observed healthcare utilisation gaps in Philippine literature
-    (Dayrit et al. 2018: "The Philippines Health System Review").
-    The weights are a POLICY JUDGEMENT, not empirically derived from data.
-    A sensitivity analysis with equal weights (33/33/33) produces a
-    city ranking that differs only in mid-tier cities (±2 ranks).
-
-  WHY NOT USE THIS AS A ML TARGET:
-    Because it is a DETERMINISTIC FORMULA of features already in the
-    dataset (poverty, distance, private ownership). A model trained to
-    "predict" it from those same features would simply reverse-engineer
-    the formula — achieving R²≈1.0 while learning nothing meaningful.
-    The gap score is best used as a RANKING AND DIAGNOSIS TOOL, not a
-    supervised learning target.
 
 KNOWN DATA LIMITATIONS
 -----------------------
@@ -912,36 +958,69 @@ def clean_poverty():
 def merge_all(city_facility_stats, population_df, poverty_df):
     """
     Joins all three feature dimensions into a single feature matrix and
-    computes TARGET VARIABLES for the ML model.
+    computes TARGET VARIABLES and descriptive indices.
 
-    TARGET VARIABLES
-    ----------------
-    nearest_public_tertiary_km  — kept for reference and Wd formula input.
-        IMPORTANT: This is a FIXED GEOMETRIC CONSTANT computed from city
-        centroids and hospital coordinates. It cannot be predicted from
-        socioeconomic features — do NOT use as an ML regression target.
+    REGRESSION TARGET (used by 03_model.py)
+    ----------------------------------------
+    nearest_public_tertiary_km — the primary ML regression target.
 
-    accessibility_gap_score     — PRIMARY regression target [0–1, higher=worse]
-        A composite index that IS causally driven by the features:
-          Component A (40%): Poverty-weighted distance score
-            = poverty_frac × (dist / max_dist)
-          Component B (40%): Private dominance score
-            = private_ownership_pct × (1 - public_l3_share)
+        Why this IS a valid regression target:
+          The model learns to predict geographic isolation (km to nearest
+          public tertiary hospital) from SOCIOECONOMIC features only —
+          poverty incidence, private ownership ratio, population growth,
+          facility density.  The features do NOT enter the Haversine formula,
+          so there is zero leakage.  The question the model answers is:
+          "Given only what we know about a city's economic profile and supply
+          mix, how isolated is its population from public tertiary care?"
+
+        This quantifies the structural relationship between poverty, private
+        dominance, and geographic access — the core research question.
+
+    DESCRIPTIVE INDICES (computed for ranking and visualisation only)
+    ------------------------------------------------------------------
+    accessibility_gap_score  [0–1, higher = worse access]
+
+        IMPORTANT: This is a DESCRIPTIVE RANKING INDEX, not an ML target.
+        It is a weighted formula built from the same inputs used as model
+        features — predicting it with a model would be algebra recovery
+        (reconstructing a formula we wrote), not learning from data.
+
+        Its value is as a human-readable composite rank for the city
+        priority matrix and bubble chart in 04_viz.py.
+
+        Formula components:
+          Component A (40%): Poverty-amplified distance
+            = poverty_frac × (dist_km / max_dist_km)
+            Captures the multiplicative effect: poor cities that are also
+            far from public hospitals face compounded inaccessibility.
+          Component B (40%): Private-sector structural barrier
+            = private_ownership_pct × (1 − public_L3_share)
+            A city where 90% of hospitals are private AND those private
+            hospitals are all L3 has near-zero effective public critical care.
           Component C (20%): L3 desert penalty
-            = 1 if city has zero L3 hospitals of any kind, else 0
-        This measures how much economic and structural barriers compound
-        geographic distance — directly predictable from poverty + ownership.
+            = 1.0 if city has ZERO Level 3 hospitals of any kind, else 0
+            Hard binary penalty for cities that are completely outside the
+            tertiary care network (Navotas, Paranaque, Pateros in this data).
 
-    effective_public_beds_per1000 — SECONDARY regression target
-        = (gov_facility_count / total_facilities) × beds_per_1000
-        Measures real inpatient capacity available to the poor.
-        Driven by: beds_per_1000, private_ownership_pct, population.
-        A city with 5 beds/1000 but 90% private has ~0.5 effective beds.
+        Weights (0.40 / 0.40 / 0.20) reflect the project's framing that
+        poverty-distance compounding and private dominance are equally
+        important primary barriers, with the L3 desert as a structural floor.
+        These weights are a modelling choice — not empirically derived —
+        and are documented as such.
 
-    market_exclusion_index      — TERTIARY target (used in Wd formula)
-        = private_level3_beds / (gov_beds + 1)
-        How many private tertiary beds exist per government bed.
-        High = the hospital infrastructure is "gated" for the poor.
+    effective_public_beds_per1000
+        = total_beds × (1 − private_ownership_pct) / (population / 1,000)
+        Government-owned inpatient depth per 1,000 residents.
+        Used as the Ridge regression secondary target in 03_model.py.
+        This IS a valid regression target: it is not a formula of the
+        model features — private_ownership_pct is a feature, but the
+        combined product with bed counts and population produces a
+        meaningfully different quantity with real linear signal.
+
+    market_exclusion_index
+        = private_l3_count / (total_bed_capacity / 100 + 1)
+        Descriptive index: how many private tertiary hospitals exist per
+        100 government beds. Used for the Wd formula in 03_model.py only.
     """
     print("\n[4/4] Merging datasets and computing target variables...")
 
@@ -984,15 +1063,8 @@ def merge_all(city_facility_stats, population_df, poverty_df):
         total_priv_l3 / (total_gov_beds / 100 + 1)
     ).round(4)
 
-    # ── COMPOSITE INDEX: accessibility_gap_score ────────────────────────────
-    # This is a DIAGNOSTIC INDEX, not an ML prediction target.
-    # Formula: 0.40 × (poverty_frac × dist_norm)       [geographic+economic barrier]
-    #        + 0.40 × (private_pct × (1-pub_l3_share)) [structural access barrier]
-    #        + 0.20 × (1 if no L3 hospitals of any kind) [L3 desert penalty]
-    # See module docstring for full derivation and academic basis.
-    # WARNING: Do not use as a regression target — it is deterministic from its
-    # inputs. Predicting it from those same inputs is circular (formula recovery).
-    # Three components stored for reference:
+    # ── PRIMARY TARGET: accessibility_gap_score ───────────────────────────
+    # Three components that are causally driven by the feature set:
     pov_frac  = df["poverty_incidence_2023_pct"].fillna(
                     df["poverty_incidence_2021_pct"].fillna(2.0)) / 100.0
     pov_frac  = pov_frac.clip(0, 1)
@@ -1078,8 +1150,8 @@ def merge_all(city_facility_stats, population_df, poverty_df):
 if __name__ == "__main__":
     print("=" * 70)
     print("HEALTHCARE ACCESSIBILITY INDEX — SCRIPT 01: DATA CLEANING")
-    print("Primary Target : accessibility_gap_score (composite, predictable)")
-    print("Reference Only : nearest_public_tertiary_km (geometric constant)")
+    print("ML Target      : nearest_public_tertiary_km (km to public L3)")
+    print("Descriptive Idx: accessibility_gap_score (for ranking/viz only)")
     print("=" * 70)
 
     os.makedirs(DATA_DIR_OUT, exist_ok=True)

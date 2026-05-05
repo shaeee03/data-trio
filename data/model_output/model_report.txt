@@ -1,0 +1,107 @@
+======================================================================
+HEALTHCARE VULNERABILITY INDEX — MODEL REPORT
+Project: The Metro Manila Healthcare Paradox
+Generated: 2026-05-05 09:16
+======================================================================
+
+RESEARCH QUESTION
+----------------------------------------
+How do poverty and private-sector dominance physically compress
+the effective healthcare service area for the urban poor,
+independent of the total number of facilities in a city?
+
+ANALYTICAL FRAMING (n=17)
+----------------------------------------
+Metro Manila has exactly 17 LGUs — the complete population, not
+a sample.  The model is an ATTRIBUTION ANALYSIS: it decomposes
+which structural factors most explain variation in geographic
+isolation across NCR cities.  R² is interpreted as 'the features
+collectively account for X% of variance in healthcare access' —
+a descriptive structural claim, not a generalisation to unseen data.
+
+REGRESSION TARGETS
+----------------------------------------
+Task A — Wd (2SFCA-inspired Weighted Accessibility Index)
+  Combines public/private L3 supply weighted by poverty discount
+  and Haversine distance. Higher = more accessible.
+
+Task B — Effective Public Beds per 1,000 residents
+  = total_beds × (1 − private_ownership_pct) / population_per_1000
+  Government-only inpatient depth — what the poor can actually access.
+
+MODEL METRICS
+----------------------------------------
+
+Task A — Wd
+  Model                                MAE       RMSE       R2
+  ------------------------------ ---------  ---------  -------
+  kNN (Baseline)                    0.2448     0.2957   0.2213
+  Ridge L2 Regression               0.1862     0.2372   0.4991
+  Gradient Boosting                 0.1258     0.1574   0.7795
+
+Task B — Effective Public Beds
+  Model                                MAE       RMSE       R2
+  ------------------------------ ---------  ---------  -------
+  kNN (Baseline)                    0.3194     0.6092   0.3714
+  Ridge L2 Regression               0.1881     0.2338   0.9074
+  Gradient Boosting                 0.4574     0.7278   0.1026
+
+
+CITY PRIORITY RANKING (Wd — lowest = most underserved)
+----------------------------------------
+ rank        city  wd_score  pub_beds_1000  nearest_km  poverty_pct  private_pct         paradox_zone
+    1     NAVOTAS    0.0000          0.176       5.659          2.5         37.1   High Vulnerability
+    2     PATEROS    0.0620          0.361       2.727          0.8         64.3 Medium Vulnerability
+    3    SAN JUAN    0.1099          1.616       3.932          0.7         54.0 Medium Vulnerability
+    4     MALABON    0.1137          0.111       4.796          1.5         63.9   High Vulnerability
+    5    CALOOCAN    0.1147          0.216       8.773          1.9         67.2   High Vulnerability
+    6   PARANAQUE    0.2186          0.199       4.117          0.6         81.0 Medium Vulnerability
+    7 MANDALUYONG    0.3071          3.423       3.355          0.3         68.1 Medium Vulnerability
+    8      MAKATI    0.3233          0.404       3.159          0.6         82.5 Medium Vulnerability
+    9   LAS PINAS    0.4578          0.695       1.972          0.7         64.1 Medium Vulnerability
+   10       PASIG    0.5970          0.587       1.739          2.1         70.6   High Vulnerability
+   11  VALENZUELA    0.6860          0.383       1.126          0.7         47.4 Medium Vulnerability
+   12    MARIKINA    0.8109          0.467       0.218          0.7         72.2 Medium Vulnerability
+   13       PASAY    0.8115          0.278       0.377          0.5         82.4 Medium Vulnerability
+   14  MUNTINLUPA    0.8278          0.334       0.666          0.1         75.2 Medium Vulnerability
+   15 QUEZON CITY    0.8723          0.696       1.571          0.7         79.0    Low Vulnerability
+   16      TAGUIG    0.8741          0.607       0.809          2.0         64.9   High Vulnerability
+   17      MANILA    1.0000          0.771       0.891          1.6         79.5    Low Vulnerability
+
+TOP FEATURE IMPORTANCES — Wd (GBM)
+----------------------------------------
+                   feature                                            label  importance
+nearest_public_tertiary_km      Distance to Nearest Public L3 Hospital (km)    0.815885
+      nearest_km_x_poverty Distance × Poverty (compound geographic barrier)    0.099823
+     private_ownership_pct                      Private Ownership Share (%)    0.061009
+             beds_per_1000               Bed Capacity (per 1,000 residents)    0.012995
+poverty_incidence_2023_pct                      Poverty Incidence (%, 2023)    0.010287
+            level3_per100k              Level-3 Hospital Density (per 100k)    0.000000
+        beds_per_poor_1000        Effective Bed Supply (poverty-discounted)    0.000000
+      l3_per_poor_resident         Effective L3 Access (poverty-discounted)    0.000000
+
+TOP FEATURE IMPORTANCES — Effective Public Beds (Ridge)
+----------------------------------------
+                   feature                                            label  importance
+      l3_per_poor_resident         Effective L3 Access (poverty-discounted)    1.132160
+            level3_per100k              Level-3 Hospital Density (per 100k)    1.109787
+             beds_per_1000               Bed Capacity (per 1,000 residents)    0.436193
+        beds_per_poor_1000        Effective Bed Supply (poverty-discounted)    0.271091
+      nearest_km_x_poverty Distance × Poverty (compound geographic barrier)    0.235672
+nearest_public_tertiary_km      Distance to Nearest Public L3 Hospital (km)    0.199479
+     private_ownership_pct                      Private Ownership Share (%)    0.190405
+poverty_incidence_2023_pct                      Poverty Incidence (%, 2023)    0.025068
+
+KNOWN LIMITATIONS
+----------------------------------------
+1. n=17: Complete population census — LOO R² is descriptive,
+   not a generalisation estimate.
+2. City centroids: Haversine underestimates within-city variation
+   (Quezon City is 165 km² — peripheral barangays may be 15+ km
+   by road despite the 1.57 km centroid distance).
+3. Temporal mismatch: NHFR ~2023–2025, population 2024,
+   poverty 2023. Cross-sectional snapshot, not longitudinal.
+4. Private/public binary: Ignores PhilHealth coverage,
+   NGO hospitals, and user fees in public hospitals.
+5. NCR-only scope: Poverty range 0.3–4.2% (national avg ~18%).
+   Model would not transfer to other regions.

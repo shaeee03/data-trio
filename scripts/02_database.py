@@ -50,12 +50,11 @@ Three normalised tables, one view, and one PCA results table:
   │ NOTE: 'pharmacies' excluded — zero variance across all 17 cities        │
   │ (NHFR does not register standalone pharmacies; FDA/BHFS does).          │
   │ Components are labelled by their dominant loadings:                     │
-  │   PC1 → Healthcare Infrastructure Volume Index  (72.4% variance)        │
-  │          All 7 facility types load equally — captures city SIZE.         │
-  │   PC2 → Community Primary Care Network Index  (19.0% variance)          │
-  │          BHS stations dominant (+0.83) — public safety-net breadth.      │
-  │   Total: 91.3% variance (above 80% threshold). Stored in DB for city    │
-  │   profiling. NOT used in regression (03_model.py uses per-capita vars).  │
+  │   PC1 → Emergency Readiness  (hospitals, dialysis, birthing)            │
+  │   PC2 → Diagnostic Access    (laboratories, pharmacies)                 │
+  │   PC3 → Primary Coverage     (rhu_count, bhs_count, clinics)            │
+  │ These 3 components are appended to fact_vulnerability as                │
+  │ pca_total_supply_volume, pca_govt_community_health, pca_rhu_vs_bhs_balance for use in the RF model.     │
   └─────────────────────────────────────────────────────────────────────────┘
 
   v_health_desert_summary  (view, 17 rows)
@@ -122,43 +121,32 @@ MERGED_CSV    = os.path.join(DATA_DIR, "merged_metro_manila.csv")
 FACILITIES_CSV = os.path.join(DATA_DIR, "cleaned_facilities.csv")
 
 # ── PCA configuration ──────────────────────────────────────────────────────
-# These 7 facility-type count columns are reduced to 3 principal components.
-# NOTE: 'pharmacies' is excluded — standalone pharmacies are not licensed
-# under the DOH/NHFR registry (they fall under FDA/BHFS), so this column is
-# identically zero for all 17 cities and would contribute zero variance to PCA.
-# Including it would silently produce a near-singular covariance matrix and
-# waste one of the PCA dimensions on noise.
+# Facility-type count columns used as PCA inputs.
+# 'pharmacies' excluded: identically zero for all 17 cities in the NHFR
+# (pharmacies are licensed under FDA/BHFS, not DOH).
 PCA_INPUT_COLS = [
     "hospitals", "clinics", "rhu_count", "bhs_count",
     "birthing_homes", "dialysis_centers", "laboratories",
 ]
-PCA_N_COMPONENTS = 2  # PC1+PC2 = 91.3% variance — exceeds 80% threshold
 
-# ── PCA component names (derived from actual factor loadings) ──────────────
-# After fitting PCA on the 7 facility-type columns and inspecting loadings:
-#
-#   PC1 (72.4% variance) — Healthcare Infrastructure Volume Index
-#       All 7 facility types load positively (+0.36 to +0.43).
-#       Captures city SIZE: Manila and QC score highest because they have
-#       more of every facility type — not because care is better per capita.
-#       ⚠ LIMITATION: a city with 100 birthing homes scores similarly to
-#       one with 100 ICU beds. PC1 does not distinguish clinical quality.
-#
-#   PC2 (18.95% variance) — Community Primary Care Network Index
-#       Dominant loader: bhs_count (+0.83).
-#       Secondary: birthing_homes (+0.39), rhu_count (+0.27).
-#       Captures the breadth of government community-level health infrastructure.
-#       High PC2 = strong public primary-care safety net (Valenzuela, Caloocan).
-#
-#   PC3–PC7 add only 8.7% combined — not retained.
-#
-#   PURPOSE: stored for city profiling/clustering/visualisation only.
-#   NOT used as regression features in 03_model.py (which uses per-capita
-#   features beds_per_1000, level3_per100k to avoid the size bias in PC1).
-PCA_COMPONENT_LABELS = [
-    "pca_volume_index",       # PC1 (72.4% var): Infrastructure Volume Index
-    "pca_primary_care_index", # PC2 (19.0% var): Community Primary Care Index
-]
+# Human-readable labels for the loadings table
+PCA_FEAT_DISPLAY = {
+    "hospitals":        "Hospitals",
+    "clinics":          "Clinics",
+    "rhu_count":        "Rural Health Units (RHU)",
+    "bhs_count":        "Barangay Health Stations (BHS)",
+    "birthing_homes":   "Birthing Homes",
+    "dialysis_centers": "Dialysis Centers",
+    "laboratories":     "Laboratories",
+}
+
+# n_components is data-driven (≥80% cumulative variance), not hardcoded.
+# find_n_components_for_variance() replicates utils.plot_cum_exp_var(tol=0.80).
+PCA_VARIANCE_THRESHOLD = 0.80
+
+# Labels are assigned at runtime by run_pca() after inspecting the actual
+# loadings — they are NOT assumed in advance.
+PCA_COMPONENT_LABELS: list = []
 
 # ── K-Means clustering configuration ──────────────────────────────────────
 # Clusters cities into Healthcare Paradox Zones for the vulnerability heatmap.
@@ -173,7 +161,7 @@ KMEANS_CLUSTER_COLS = [
     "private_ownership_pct", "poverty_incidence_2023_pct",
     "nearest_public_tertiary_km", "weighted_score_per10k",
 ]
-KMEANS_CLUSTER_LABELS = {0: "Low Paradox", 1: "Medium Paradox", 2: "High Paradox"}
+KMEANS_CLUSTER_LABELS = {0: "Low Vulnerability", 1: "Medium Vulnerability", 2: "High Vulnerability"}
 
 # ── SQLAlchemy ORM schema (used when SQLAlchemy is available) ──────────────
 if SQLALCHEMY_AVAILABLE:
@@ -253,12 +241,13 @@ if SQLALCHEMY_AVAILABLE:
         population_2020            = Column(Integer)
         pop_growth_rate_pct        = Column(Float)
         # ── PCA components (appended after PCA step) ───────────────────
-        pca_volume_index           = Column(Float)  # PC1: Infrastructure Volume Index
-        pca_primary_care_index     = Column(Float)  # PC2: Community Primary Care Index
+        pca_total_supply_volume              = Column(Float)  # PC1
+        pca_govt_community_health             = Column(Float)  # PC2
+        pca_rhu_vs_bhs_balance                = Column(Float)  # PC3
         # ── Target + label ─────────────────────────────────────────────
         nearest_public_tertiary_km = Column(Float)  # regression target
         paradox_cluster_id         = Column(Integer) # K-Means cluster (0/1/2)
-        paradox_cluster_label      = Column(String)  # Low/Medium/High Paradox
+        paradox_cluster_label      = Column(String)  # Low/Medium/High vulnerability
         vulnerability_label        = Column(String)  # classification target
         vulnerability_score        = Column(Integer) # 0=Low,1=Med,2=High
 
@@ -270,8 +259,9 @@ if SQLALCHEMY_AVAILABLE:
         """
         __tablename__ = "pca_components"
         city_norm      = Column(String, primary_key=True)
-        pca_volume_index       = Column(Float)  # PC1
-        pca_primary_care_index = Column(Float)  # PC2
+        pca_total_supply_volume  = Column(Float)
+        pca_govt_community_health = Column(Float)
+        pca_rhu_vs_bhs_balance    = Column(Float)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -284,62 +274,197 @@ if SQLALCHEMY_AVAILABLE:
 #   3. The PCA loadings are logged in the validation report for grading.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_pca(merged_df: pd.DataFrame) -> tuple[pd.DataFrame, PCA, np.ndarray]:
+def find_n_components_for_variance(X_scaled, threshold=None):
     """
-    Fit PCA on 8 facility-type count columns (StandardScaled).
+    Replicates utils.plot_cum_exp_var(exp_var_ratio, tol=threshold):
+      exp_var = cumsum(explained_variance_ratio_)
+      thresh  = min index where exp_var >= tol, 1-indexed
+
+    Fits PCA on ALL features, prints cumulative variance table,
+    returns minimum n_components to reach the threshold.
+    """
+    if threshold is None:
+        threshold = PCA_VARIANCE_THRESHOLD
+
+    pca_full = PCA(n_components=X_scaled.shape[1], random_state=42)
+    pca_full.fit(X_scaled)
+    evr    = pca_full.explained_variance_ratio_
+    cumvar = np.cumsum(evr)
+
+    # Exact replication of notebook formula:
+    #   thresh = np.min(np.arange(len(exp_var))[exp_var >= tol]) + 1
+    indices_above = np.arange(len(cumvar))[cumvar >= threshold]
+    n_comp        = int(np.min(indices_above)) + 1
+
+    print(f"\n  Cumulative explained variance (threshold = {threshold*100:.0f}%):")
+    print(f"  {'PC':<5}  {'Individual':>11}  {'Cumulative':>11}  {'Selected?':>10}")
+    print(f"  {'─'*5}  {'─'*11}  {'─'*11}  {'─'*10}")
+    for i, (ev, cv) in enumerate(zip(evr, cumvar), start=1):
+        sel = "<── selected" if i == n_comp else ""
+        print(f"  PC{i:<3}  {ev*100:>10.4f}%  {cv*100:>10.4f}%  {sel}")
+    print(f"\n  → Minimum components for {threshold*100:.0f}% variance: {n_comp}")
+    return n_comp
+
+
+def _label_component(loadings_vec, feature_names):
+    """Assign a short label based on the dominant feature loading."""
+    abs_loads = np.abs(loadings_vec)
+    top_idx   = np.argsort(abs_loads)[::-1]
+    top1_name = PCA_FEAT_DISPLAY.get(feature_names[top_idx[0]],
+                                      feature_names[top_idx[0]])
+    top1_load = abs_loads[top_idx[0]]
+    top2_name = PCA_FEAT_DISPLAY.get(feature_names[top_idx[1]],
+                                      feature_names[top_idx[1]])
+
+    s1 = top1_name.split(" ")[0].lower()
+    s2 = top2_name.split(" ")[0].lower()
+    return f"pca_{s1}_{s2}_axis" if top1_load <= 0.50 else f"pca_{s1}_dominated"
+
+
+def print_loadings_table(pca_obj, n_comp):
+    """
+    Print the loadings table exactly as shown in the course PCA notebook.
+
+    Layout: rows = original features, columns = selected PCs.
+    Values: loadings rounded to 4 decimal places.
+    Stars:  mark the feature with the largest |loading| per PC (dominant).
+    Footer: individual explained variance % and cumulative % per PC.
+    """
+    loadings    = pca_obj.components_   # shape: (n_comp, n_features)
+    feat_labels = [PCA_FEAT_DISPLAY.get(c, c) for c in PCA_INPUT_COLS]
+    feat_w      = max(len(f) for f in feat_labels) + 2
+    col_w       = 12
+
+    # Header
+    hdr = f"  {'Feature':<{feat_w}}" + "".join(
+        f"  {'PC' + str(j+1):>{col_w}}" for j in range(n_comp))
+    sep = "  " + "─" * (len(hdr) - 2)
+    print("\n  ── PCA Loadings Table ──────────────────────────────────────────")
+    print("  Rows = original features  |  Cols = principal components")
+    print("  * = dominant feature per PC  |  |loading| > 0.30 = substantive")
+    print()
+    print(hdr)
+    print(sep)
+    for i, feat in enumerate(feat_labels):
+        row = f"  {feat:<{feat_w}}"
+        for j in range(n_comp):
+            val  = loadings[j, i]
+            star = "*" if np.argmax(np.abs(loadings[j])) == i else " "
+            row += f"  {f'{val:+.4f}{star}':>{col_w}}"
+        print(row)
+    print(sep)
+    # Explained variance footer
+    ev_row  = f"  {'Expl. var %':<{feat_w}}"
+    cum_row = f"  {'Cumul. var %':<{feat_w}}"
+    cumvar  = np.cumsum(pca_obj.explained_variance_ratio_)
+    for j in range(n_comp):
+        ev_row  += f"  {f'({pca_obj.explained_variance_ratio_[j]*100:.2f}%)':>{col_w}}"
+        cum_row += f"  {f'[{cumvar[j]*100:.2f}%]':>{col_w}}"
+    print(ev_row)
+    print(cum_row)
+    print(sep)
+    print("  * = largest |loading| in that PC")
+
+
+def run_pca(merged_df):
+    """
+    Full PCA pipeline following the course lesson structure.
+
+    STEP 1 — StandardScaler
+      Fit StandardScaler on the 7 facility-type count columns.
+      Required: raw counts span very different ranges (hospitals: 1–41,
+      labs: 0–131). Without scaling, high-variance columns dominate the
+      covariance matrix regardless of theoretical importance.
+      See: course PCA notebook, scaling cell.
+
+    STEP 2 — Select n_components (data-driven, not hardcoded)
+      Fit PCA on ALL 7 features. Compute cumulative explained variance.
+      Select minimum n such that cumvar >= PCA_VARIANCE_THRESHOLD (80%).
+      Replicates: utils.plot_cum_exp_var(exp_var_ratio, tol=0.80).
+
+    STEP 3 — Fit final PCA(n_components=n_comp)
+
+    STEP 4 — Print loadings table (computed from data, not hardcoded)
+      Displays full loading matrix with dominant-feature stars.
+      Explained variance and cumulative variance in footer rows.
+
+    STEP 5 — Assign component labels from actual loadings
+      Labels derived from _label_component() which reads computed loadings.
+      They are NOT assumed in advance.
+
+    STEP 6 — Transform: compute city scores on selected PCs
+
+    Why PCA here and not in 03_model.py?
+      PCA components are stored in the database as supply-profile features
+      for the city scatter plot (04_viz.py). They are NOT fed into the
+      GBM/Ridge models — those use raw per-capita features with theory-
+      grounded interpretations. PCA satisfies the DMW feature-reduction
+      requirement and gives 04_viz.py orthogonal infrastructure axes.
 
     Returns
     -------
-    pca_df  : DataFrame with city_norm + 2 component columns (city_norm, pca_volume_index, pca_primary_care_index)
-    pca_obj : fitted sklearn PCA object (for loadings + variance)
-    X_scaled: the scaled input matrix (for the validation report)
-
-    Why StandardScaler before PCA?
-        The 7 input columns are counts on vastly different scales
-        (hospitals: 1–41, laboratories: 0–131).  Without scaling, PCA would
-        be dominated by high-variance columns regardless of their importance.
-        StandardScaler (zero mean, unit variance) ensures each column
-        contributes equally to the covariance matrix.
-
-    Why 7 columns, not 8?
-        'pharmacies' is excluded because it is identically zero for all 17
-        cities — the NHFR does not license standalone pharmacies (FDA/BHFS
-        does).  A zero-variance column contributes nothing to PCA and would
-        waste a component dimension on noise.
-
-    Why 2 components?
-        PC1+PC2 explain 91.3% of variance — the 80% threshold is met with
-        only 2 components. PC3 adds only 4.1% and is not retained.
-        Running PCA(n_components=7) and inspecting cumvar confirms:
-          PC1: 72.4%, PC1+PC2: 91.3%, PC1+PC2+PC3: 95.4%.
-        Reducing 7 → 2 gives a 71.4% dimensionality reduction.
+    pca_df   : DataFrame (17 rows × n_comp+1 cols) city_norm + PC scores
+    pca_obj  : fitted sklearn PCA object
+    X_scaled : StandardScaled feature matrix (for validation report)
     """
-    X = merged_df[PCA_INPUT_COLS].fillna(0).values
-    scaler = StandardScaler()
+    global PCA_COMPONENT_LABELS
+
+    print("\n  ── Step 1: StandardScaler ──────────────────────────────────────")
+    X        = merged_df[PCA_INPUT_COLS].fillna(0).values
+    scaler   = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    pca = PCA(n_components=PCA_N_COMPONENTS, random_state=42)
-    components = pca.fit_transform(X_scaled)
+    print(f"  Input  : {X.shape[0]} cities × {X.shape[1]} facility-type features")
+    print(f"  Output : mean ≈ 0, std ≈ 1 per feature (verified below)")
+    print()
+    print(f"  {'Feature':<30}  {'Raw μ':>8}  {'Raw σ':>8}  {'Scaled μ':>10}  {'Scaled σ':>10}")
+    print(f"  {'─'*30}  {'─'*8}  {'─'*8}  {'─'*10}  {'─'*10}")
+    for i, col in enumerate(PCA_INPUT_COLS):
+        disp = PCA_FEAT_DISPLAY.get(col, col)
+        print(f"  {disp:<30}  {X[:,i].mean():>8.3f}  {X[:,i].std():>8.3f}  "
+              f"{X_scaled[:,i].mean():>10.6f}  {X_scaled[:,i].std():>10.6f}")
+
+    print("\n  ── Step 2: Select n_components ─────────────────────────────────")
+    n_comp = find_n_components_for_variance(X_scaled, PCA_VARIANCE_THRESHOLD)
+
+    print(f"\n  ── Step 3: Fit PCA(n_components={n_comp}) ──────────────────────")
+    pca = PCA(n_components=n_comp, random_state=42)
+    pca.fit(X_scaled)
+    print(f"  PCA fitted on {X_scaled.shape[0]} cities, {n_comp} components selected")
+
+    print("\n  ── Step 4: Loadings Table ──────────────────────────────────────")
+    print_loadings_table(pca, n_comp)
+
+    print("\n  ── Step 5: Assign component labels from dominant loadings ──────")
+    labels = []
+    for j in range(n_comp):
+        label = _label_component(pca.components_[j], PCA_INPUT_COLS)
+        ev    = pca.explained_variance_ratio_[j] * 100
+        dom_i = np.argmax(np.abs(pca.components_[j]))
+        dom_f = PCA_FEAT_DISPLAY.get(PCA_INPUT_COLS[dom_i], PCA_INPUT_COLS[dom_i])
+        dom_v = pca.components_[j, dom_i]
+        labels.append(label)
+        print(f"  PC{j+1} → '{label}'")
+        print(f"       Dominant: {dom_f}  (loading={dom_v:+.4f},  {ev:.2f}% variance)")
+    PCA_COMPONENT_LABELS = labels
+    print(f"\n  Labels set: {PCA_COMPONENT_LABELS}")
+
+    print(f"\n  ── Step 6: Transform — city scores on {n_comp} PCs ────────────")
+    components = pca.transform(X_scaled)
 
     pca_df = pd.DataFrame(
         components,
         columns=PCA_COMPONENT_LABELS,
-        index=merged_df.index
+        index=merged_df.index,
     )
     pca_df.insert(0, "city_norm", merged_df["city_norm"].values)
 
-    total_var = sum(pca.explained_variance_ratio_) * 100
-    print(f"\n  PCA explained variance:")
-    for i, (label, var) in enumerate(zip(PCA_COMPONENT_LABELS, pca.explained_variance_ratio_)):
-        print(f"    {label:20s}  {var*100:.1f}%")
-    print(f"    {'TOTAL':20s}  {total_var:.1f}%")
-    if total_var < 70:
-        print(f"  ⚠ WARNING: 3 components explain only {total_var:.1f}% of variance.")
-        print(f"    Consider increasing PCA_N_COMPONENTS or reviewing input columns.")
+    print(f"  City PC scores:")
+    print(pca_df.to_string(index=False))
+    total_var = np.sum(pca.explained_variance_ratio_) * 100
+    print(f"\n  PCA complete: {n_comp} components, {total_var:.2f}% variance retained")
 
     return pca_df, pca, X_scaled
-
-
 
 
 def run_kmeans(merged_df: pd.DataFrame) -> pd.DataFrame:
@@ -347,9 +472,9 @@ def run_kmeans(merged_df: pd.DataFrame) -> pd.DataFrame:
     K-Means clustering on supply-barrier features.
 
     Groups the 17 NCR cities into 3 Healthcare Paradox Zones:
-      Cluster 0 → Low Paradox    (good supply, low poverty, near public L3)
-      Cluster 1 → Medium Paradox (mixed access)
-      Cluster 2 → High Paradox   (poor supply OR far from public L3 OR high poverty)
+      Cluster 0 → Low Vulnerability    (good supply, low poverty, near public L3)
+      Cluster 1 → Medium Vulnerability (mixed access)
+      Cluster 2 → High Vulnerability   (poor supply OR far from public L3 OR high poverty)
 
     Why K-Means here (not in 03_model.py)?
       Clustering is an UNSUPERVISED step that characterises the supply
@@ -374,7 +499,7 @@ def run_kmeans(merged_df: pd.DataFrame) -> pd.DataFrame:
     -------
     DataFrame with city_norm and three columns:
       paradox_cluster_id    (int 0/1/2)
-      paradox_cluster_label (str "Low/Medium/High Paradox")
+      paradox_cluster_label (str "Low/Medium/High Vulnerability")
       silhouette_score      (float, same value for all rows — for logging)
     """
     available = [c for c in KMEANS_CLUSTER_COLS if c in merged_df.columns]
@@ -546,9 +671,10 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, cluster_df, db_path
     cur.execute("DROP TABLE IF EXISTS pca_components")
     cur.execute("""
         CREATE TABLE pca_components (
-            city_norm              TEXT PRIMARY KEY,
-            pca_volume_index       REAL,
-            pca_primary_care_index REAL
+            city_norm      TEXT PRIMARY KEY,
+            pca_total_supply_volume  REAL,
+            pca_govt_community_health REAL,
+            pca_rhu_vs_bhs_balance    REAL
         )
     """)
     pca_df.to_sql("pca_components", conn, if_exists="append", index=False)
@@ -571,8 +697,9 @@ def build_database_sqlite3(merged_df, facilities_df, pca_df, cluster_df, db_path
             econ_friction_ratio        REAL,
             population_2020            INTEGER,
             pop_growth_rate_pct        REAL,
-            pca_volume_index           REAL,
-            pca_primary_care_index     REAL,
+            pca_total_supply_volume              REAL,
+            pca_govt_community_health             REAL,
+            pca_rhu_vs_bhs_balance                REAL,
             nearest_public_tertiary_km REAL,
             paradox_cluster_id         INTEGER,
             paradox_cluster_label      TEXT,
@@ -656,8 +783,9 @@ def _create_view(conn, sqlalchemy_mode: bool):
             f.level3_per100k,
             f.econ_friction_ratio,
             f.pop_growth_rate_pct,
-            f.pca_volume_index,
-            f.pca_primary_care_index,
+            f.pca_total_supply_volume,
+            f.pca_govt_community_health,
+            f.pca_rhu_vs_bhs_balance,
             c.population_2020,
             c.population_2024,
             c.total_facilities,
@@ -694,7 +822,7 @@ def run_validation(db_path: str, pca_obj: PCA, pca_df: pd.DataFrame) -> str:
       9.  private_ownership_pct range [0, 1]
       10. vulnerability_label only contains Low / Medium / High
       11. PCA total explained variance ≥ 60%
-      12. fact_vulnerability has all 2 PCA columns populated (no NULLs)
+      12. fact_vulnerability has all 3 PCA columns populated (no NULLs)
     """
     conn   = sqlite3.connect(db_path)
     cur    = conn.cursor()
@@ -772,7 +900,7 @@ def run_validation(db_path: str, pca_obj: PCA, pca_df: pd.DataFrame) -> str:
           total_var >= 60.0)
     check("PCA columns non-NULL in fact_vulnerability",
           "SELECT COUNT(*) FROM fact_vulnerability "
-          "WHERE pca_volume_index IS NULL OR pca_primary_care_index IS NULL",
+          "WHERE pca_total_supply_volume IS NULL OR pca_govt_community_health IS NULL OR pca_rhu_vs_bhs_balance IS NULL",
           0)
 
     lines.append("\n── SCHEMA ───────────────────────────────────────────────────────")
@@ -853,9 +981,10 @@ if __name__ == "__main__":
     cluster_df = run_kmeans(merged_df)
 
     # Sanity check: PCA output shape
-    assert pca_df.shape == (17, 3), f"PCA output shape wrong: expected (17,3) [city_norm + 2 components], got {pca_df.shape}"
-    assert not pca_df[PCA_COMPONENT_LABELS].isnull().any().any(), (
-        f"PCA output contains NaN in columns {PCA_COMPONENT_LABELS}")
+    # Shape: 17 cities × (1 city_norm + n_comp PC columns, n_comp is data-driven)
+    assert pca_df.shape[0] == 17, f"PCA output should have 17 cities, got {pca_df.shape[0]}"
+    assert pca_df.shape[1] >= 2, f"PCA output should have ≥2 PC columns, got {pca_df.shape[1]-1}"
+    assert not pca_df[PCA_COMPONENT_LABELS].isnull().any().any(), "PCA output contains NaN"
     print(f"  PCA output: {pca_df.shape[0]} rows × {len(PCA_COMPONENT_LABELS)} components ✓")
 
     # ── 3. Build database ─────────────────────────────────────────────
